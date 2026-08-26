@@ -43,7 +43,6 @@ impl Config {
                 Environment::with_prefix("YALOM")
                     .prefix_separator("_")
                     .separator("__")
-                    .try_parsing(true)
                     .ignore_empty(true),
             )
             .build()?
