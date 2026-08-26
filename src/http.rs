@@ -66,8 +66,6 @@ async fn tg_webhook(State(state): State<SharedState>, Json(update): Json<Update>
             chat_id,
             "failed to send telegram message"
         );
-
-        return StatusCode::INTERNAL_SERVER_ERROR;
     }
 
     StatusCode::OK

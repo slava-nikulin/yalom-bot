@@ -29,7 +29,12 @@ pub struct HttpConfig {
 impl Config {
     pub fn load() -> anyhow::Result<Self> {
         #[cfg(feature = "local-env")]
-        dotenvy::dotenv()?;
+        if let Err(err) = dotenvy::dotenv() {
+            tracing::error!(
+                error = %err,
+                "failed to load local .env file"
+            );
+        }
 
         Ok(config::Config::builder()
             .set_default("http.host", "0.0.0.0")?
