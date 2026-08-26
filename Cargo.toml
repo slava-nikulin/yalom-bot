@@ -1,0 +1,33 @@
+[package]
+name = "yalom-bot"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow = "1.0.104"
+axum = "0.8.9"
+config = { version = "0.15.25", default-features = false }
+constant_time_eq = "0.5.0"
+dotenvy = { version = "0.15.7", optional = true }
+rand = { version = "0.10.2", features = ["thread_rng"] }
+rustigram-api = "0.12.0"
+rustigram-types = "0.12.0"
+serde = "1.0.229"
+serde_json = "1.0.151"
+tokio = { version = "1.53.1", features = [
+  "macros",
+  "rt-multi-thread",
+  "signal",
+] }
+tower = "0.5.3"
+tracing = "0.1.44"
+tracing-subscriber = "0.3.23"
+url = { version = "2.5.8", features = ["serde"] }
+
+[features]
+default = ["local-dev"]
+
+local-dev = ["local-env", "auto-webhook"]
+
+local-env = ["dep:dotenvy"]
+auto-webhook = []
