@@ -1,15 +1,23 @@
 use rustigram_api::BotClient;
 use std::{net::SocketAddr, sync::Arc};
 use tokio::signal::unix::{SignalKind, signal};
+use tracing_subscriber::EnvFilter;
 use yalom_bot::{
     app_state::AppState, config::Config, http::app_router, security::generate_secret_token,
 };
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    tracing_subscriber::fmt::init();
-
     let cfg = Arc::new(Config::load()?);
+    let filter =
+        EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("warn,yalom_bot=info"));
+
+    tracing_subscriber::fmt()
+        .json()
+        .flatten_event(true)
+        .with_ansi(false)
+        .with_env_filter(filter)
+        .init();
 
     let tg_webhook_secret_token = match &cfg.telegram.webhook.secret_token {
         Some(token) => token.clone(),

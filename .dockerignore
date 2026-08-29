@@ -1,0 +1,10 @@
+.git
+.idea
+.vscode
+target
+
+.env
+.env.*
+!.env.example
+
+**/*.rs.bk
