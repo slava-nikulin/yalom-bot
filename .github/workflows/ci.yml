@@ -37,4 +37,4 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
-      - run: cargo check --no-default-features --locked
+      - run: cargo build --release --no-default-features --locked

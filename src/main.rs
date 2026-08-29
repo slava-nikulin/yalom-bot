@@ -8,6 +8,7 @@ use yalom_bot::{
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    let cfg = Arc::new(Config::load()?);
     let filter =
         EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("warn,yalom_bot=info"));
 
@@ -17,8 +18,6 @@ async fn main() -> anyhow::Result<()> {
         .with_ansi(false)
         .with_env_filter(filter)
         .init();
-
-    let cfg = Arc::new(Config::load()?);
 
     let tg_webhook_secret_token = match &cfg.telegram.webhook.secret_token {
         Some(token) => token.clone(),
