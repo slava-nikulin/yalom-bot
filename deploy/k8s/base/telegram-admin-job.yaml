@@ -1,0 +1,23 @@
+apiVersion: batch/v1
+kind: Job
+
+metadata:
+  name: telegram-set-webhook
+
+spec:
+  ttlSecondsAfterFinished: 300
+  backoffLimit: 3
+
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: telegram-admin
+          image: ghcr.io/slava-nikulin/yalom-bot:latest
+          command:
+            - /usr/local/bin/telegram_admin
+          envFrom:
+            - configMapRef:
+                name: yalom-bot-config
+            - secretRef:
+                name: yalom-bot-secrets

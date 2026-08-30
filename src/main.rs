@@ -2,9 +2,10 @@ use rustigram_api::BotClient;
 use std::{net::SocketAddr, sync::Arc};
 use tokio::signal::unix::{SignalKind, signal};
 use tracing_subscriber::EnvFilter;
-use yalom_bot::{
-    app_state::AppState, config::Config, http::app_router, security::generate_secret_token,
-};
+use yalom_bot::{app_state::AppState, config::Config, http::app_router};
+
+#[cfg(feature = "local-dev")]
+use yalom_bot::security::generate_secret_token;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {

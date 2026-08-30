@@ -1,0 +1,17 @@
+apiVersion: v1
+kind: Service
+
+metadata:
+  name: yalom-bot
+
+spec:
+  type: ClusterIP
+
+  selector:
+    app: yalom-bot
+
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+      protocol: TCP

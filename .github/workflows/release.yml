@@ -46,6 +46,83 @@ jobs:
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
 
+      - name: Set up kubectl
+        uses: azure/setup-kubectl@v5
+        with:
+          version: v1.36.3
+
+      - name: Render production manifests
+        run: |
+          sed -i \
+            "s/newTag: latest/newTag: ${GITHUB_SHA}/" \
+            deploy/k8s/overlays/oci-k3s/kustomization.yaml
+
+          kubectl kustomize deploy/k8s/overlays/oci-k3s \
+            > /tmp/release.yaml
+
+          if grep -Fq \
+            "${REGISTRY}/${IMAGE_NAME}:latest" \
+            /tmp/release.yaml; then
+            echo "Production manifest still contains :latest"
+            exit 1
+          fi
+
+      - name: Configure SSH
+        env:
+          OCI_SSH_HOST: ${{ vars.OCI_SSH_HOST }}
+          OCI_SSH_PORT: ${{ vars.OCI_SSH_PORT }}
+          OCI_SSH_PRIVATE_KEY: ${{ secrets.OCI_SSH_PRIVATE_KEY }}
+          OCI_SSH_KNOWN_HOSTS: ${{ secrets.OCI_SSH_KNOWN_HOSTS }}
+        run: |
+          install -m 700 -d ~/.ssh
+
+          printf '%s\n' "${OCI_SSH_PRIVATE_KEY}" \
+            > ~/.ssh/oci_ed25519
+          chmod 600 ~/.ssh/oci_ed25519
+
+          printf '%s\n' "${OCI_SSH_KNOWN_HOSTS}" \
+            > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/known_hosts
+
+          cat > ~/.ssh/config <<EOF
+          Host production
+              HostName ${OCI_SSH_HOST}
+              Port ${OCI_SSH_PORT}
+              User ubuntu
+              IdentityFile ~/.ssh/oci_ed25519
+              IdentitiesOnly yes
+              BatchMode yes
+              StrictHostKeyChecking yes
+          EOF
+
+          chmod 600 ~/.ssh/config
+
+          ssh production 'true'
+
+      - name: Deploy to production
+        run: |
+          # Job spec contains the image tag and is immutable,
+          # so remove a previous completed/failed Job first.
+          ssh production \
+            'sudo k3s kubectl delete job telegram-set-webhook \
+              --ignore-not-found=true \
+              --wait=true'
+
+          cat /tmp/release.yaml \
+            | ssh production \
+                'sudo k3s kubectl apply -f -'
+
+          ssh production \
+            'sudo k3s kubectl rollout status \
+              deployment/yalom-bot \
+              --timeout=180s'
+
+          ssh production \
+            'sudo k3s kubectl wait \
+              --for=condition=complete \
+              job/telegram-set-webhook \
+              --timeout=120s'
+
       - name: Keep last 3 images
         uses: actions/delete-package-versions@v5
         with:
@@ -57,9 +134,15 @@ jobs:
       - name: Release summary
         run: |
           {
-            echo "### Production image"
+            echo "### Production release"
             echo
+            echo "Image:"
             echo "\`${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}\`"
             echo
-            echo "Digest: \`${{ steps.build.outputs.digest }}\`"
+            echo "Digest:"
+            echo "\`${{ steps.build.outputs.digest }}\`"
+            echo
+            echo "Deployment: ✅"
+            echo
+            echo "Telegram webhook: ✅"
           } >> "$GITHUB_STEP_SUMMARY"
