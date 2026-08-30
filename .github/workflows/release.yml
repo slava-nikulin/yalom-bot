@@ -69,7 +69,8 @@ jobs:
 
       - name: Configure SSH
         env:
-          OCI_SSH_HOST: ${{ secrets.OCI_SSH_HOST }}
+          OCI_SSH_HOST: ${{ vars.OCI_SSH_HOST }}
+          OCI_SSH_PORT: ${{ vars.OCI_SSH_PORT }}
           OCI_SSH_PRIVATE_KEY: ${{ secrets.OCI_SSH_PRIVATE_KEY }}
           OCI_SSH_KNOWN_HOSTS: ${{ secrets.OCI_SSH_KNOWN_HOSTS }}
         run: |
@@ -86,9 +87,12 @@ jobs:
           cat > ~/.ssh/config <<EOF
           Host production
               HostName ${OCI_SSH_HOST}
+              Port ${OCI_SSH_PORT}
               User ubuntu
               IdentityFile ~/.ssh/oci_ed25519
               IdentitiesOnly yes
+              BatchMode yes
+              StrictHostKeyChecking yes
           EOF
 
           chmod 600 ~/.ssh/config
