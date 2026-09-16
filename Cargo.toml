@@ -5,7 +5,7 @@ edition = "2024"
 
 [dependencies]
 anyhow = "1.0.104"
-axum = "0.8.9"
+axum = { version = "0.8.9" }
 config = { version = "0.15.25", default-features = false }
 constant_time_eq = "0.5.0"
 dotenvy = { version = "0.15.7", optional = true }

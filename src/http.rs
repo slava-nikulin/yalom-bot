@@ -1,4 +1,3 @@
-use crate::app_state::SharedState;
 use axum::{
     Json, Router,
     extract::{Request, State},
@@ -11,10 +10,12 @@ use constant_time_eq::constant_time_eq;
 use rustigram_types::{Update, UpdateKind};
 use std::sync::Arc;
 
-pub fn app_router(tg_secret: String, app_state: SharedState) -> Router {
+use crate::app_state::{AppState, TelegramClient};
+
+pub fn app_router<Tg: TelegramClient>(tg_secret: String, app_state: AppState<Tg>) -> Router {
     Router::new().route("/health", get(health)).route(
         "/tg/webhook",
-        post(tg_webhook)
+        post(tg_webhook::<Tg>)
             .route_layer(middleware::from_fn_with_state(
                 Arc::<str>::from(tg_secret),
                 verify_tg_webhook_secret,
@@ -43,7 +44,10 @@ async fn verify_tg_webhook_secret(
     Ok(next.run(request).await)
 }
 
-async fn tg_webhook(State(state): State<SharedState>, Json(update): Json<Update>) -> StatusCode {
+async fn tg_webhook<Tg: TelegramClient>(
+    State(state): State<AppState<Tg>>,
+    Json(update): Json<Update>,
+) -> StatusCode {
     tracing::info!(update_id = update.update_id, "telegram update received");
 
     let UpdateKind::Message(message) = update.kind else {
@@ -58,7 +62,10 @@ async fn tg_webhook(State(state): State<SharedState>, Json(update): Json<Update>
 
     if let Err(err) = state
         .telegram
-        .send_message(chat_id, format!("you said {}", text))
+        .send_message(
+            rustigram_types::ChatId::Id(chat_id),
+            format!("you said {}", text),
+        )
         .await
     {
         tracing::error!(

@@ -71,6 +71,7 @@ jobs:
         env:
           OCI_SSH_HOST: ${{ vars.OCI_SSH_HOST }}
           OCI_SSH_PORT: ${{ vars.OCI_SSH_PORT }}
+          OCI_SSH_USER: ${{ vars.OCI_SSH_USER }}
           OCI_SSH_PRIVATE_KEY: ${{ secrets.OCI_SSH_PRIVATE_KEY }}
           OCI_SSH_KNOWN_HOSTS: ${{ secrets.OCI_SSH_KNOWN_HOSTS }}
         run: |
@@ -84,11 +85,17 @@ jobs:
             > ~/.ssh/known_hosts
           chmod 600 ~/.ssh/known_hosts
 
+          : "${OCI_SSH_HOST:?OCI_SSH_HOST is not configured}"
+          : "${OCI_SSH_PORT:?OCI_SSH_PORT is not configured}"
+          : "${OCI_SSH_USER:?OCI_SSH_USER is not configured}"
+          : "${OCI_SSH_PRIVATE_KEY:?OCI_SSH_PRIVATE_KEY is not configured}"
+          : "${OCI_SSH_KNOWN_HOSTS:?OCI_SSH_KNOWN_HOSTS is not configured}"
+
           cat > ~/.ssh/config <<EOF
           Host production
               HostName ${OCI_SSH_HOST}
               Port ${OCI_SSH_PORT}
-              User ubuntu
+              User ${OCI_SSH_USER}
               IdentityFile ~/.ssh/oci_ed25519
               IdentitiesOnly yes
               BatchMode yes

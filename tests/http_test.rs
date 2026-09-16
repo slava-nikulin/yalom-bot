@@ -1,26 +1,58 @@
+use std::sync::{Arc, Mutex};
+
 use axum::{
     Router,
     body::Body,
     http::{Method, Request, StatusCode},
 };
-use rustigram_api::BotClient;
 use rustigram_types::{Message, Update, UpdateKind};
 use tower::util::ServiceExt;
-use yalom_bot::{app_state::AppState, http::app_router};
+use yalom_bot::{
+    app_state::{AppState, TelegramClient},
+    http::app_router,
+};
 
-const TG_BOT_SECRET_TOKEN: &str = "123456789:ABC-DEF1234ghIkl-zyx57W2v1u123ew11";
 const TG_WEBHOOK_SECRET_TOKEN: &str = "tg_webhook_secret_token";
 
-fn test_router() -> Router {
-    let tg_bot = BotClient::from_token(TG_BOT_SECRET_TOKEN).unwrap();
-    let app_state = AppState::new(tg_bot);
+struct TgCall {}
 
-    app_router(TG_WEBHOOK_SECRET_TOKEN.into(), app_state)
+#[derive(Clone)]
+struct TestBotClient {
+    calls: Arc<Mutex<Vec<TgCall>>>,
+}
+
+impl TestBotClient {
+    fn new() -> Self {
+        TestBotClient {
+            calls: Arc::new(Mutex::new(Vec::new())),
+        }
+    }
+}
+
+impl TelegramClient for TestBotClient {
+    async fn send_message(
+        &self,
+        _chat_id: rustigram_types::user::ChatId,
+        _text: String,
+    ) -> anyhow::Result<()> {
+        let mut calls = self.calls.lock().unwrap();
+        calls.push(TgCall {});
+
+        Ok(())
+    }
+}
+
+fn test_router() -> (Router, Arc<Mutex<Vec<TgCall>>>) {
+    let tg_bot_client = TestBotClient::new();
+    let calls = tg_bot_client.calls.clone();
+    let app_state = AppState::new(tg_bot_client);
+
+    (app_router(TG_WEBHOOK_SECRET_TOKEN.into(), app_state), calls)
 }
 
 #[tokio::test]
 async fn test_health() {
-    let router = test_router();
+    let (router, _) = test_router();
 
     let response = router
         .oneshot(
@@ -38,12 +70,13 @@ async fn test_health() {
 
 #[tokio::test]
 async fn test_webhook_valid_token() {
-    let router = test_router();
+    let (router, calls) = test_router();
 
     let mut message = Message::default();
     message.message_id = 1;
     message.date = 0;
     message.chat.id = 123;
+    message.text = Some("foo".to_string());
 
     let update = Update {
         update_id: 1,
@@ -65,16 +98,18 @@ async fn test_webhook_valid_token() {
         .unwrap();
 
     assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(calls.lock().unwrap().len(), 1);
 }
 
 #[tokio::test]
 async fn test_webhook_invalid_token() {
-    let router = test_router();
+    let (router, calls) = test_router();
 
     let mut message = Message::default();
     message.message_id = 1;
     message.date = 0;
     message.chat.id = 123;
+    message.text = Some("foo".to_string());
 
     let update = Update {
         update_id: 1,
@@ -96,11 +131,12 @@ async fn test_webhook_invalid_token() {
         .unwrap();
 
     assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    assert_eq!(calls.lock().unwrap().len(), 0);
 }
 
 #[tokio::test]
 async fn test_webhook_valid_token_invalid_body() {
-    let router = test_router();
+    let (router, calls) = test_router();
 
     let response = router
         .oneshot(
@@ -116,4 +152,5 @@ async fn test_webhook_valid_token_invalid_body() {
         .unwrap();
 
     assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(calls.lock().unwrap().len(), 0);
 }
