@@ -2356,6 +2356,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2 0.11.0",
+ "thiserror",
  "tokio",
  "tower",
  "tower-cookies",

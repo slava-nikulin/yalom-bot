@@ -8,11 +8,14 @@ use axum::{
 use rustigram_types::{Message, Update, UpdateKind};
 use tower::util::ServiceExt;
 use yalom_bot::{
-    app_state::{AppState, TelegramClient},
+    app_state::{AppState, session_state::MiniAppState},
     http::app_router,
+    security::session::SessionTokens,
+    telegram::TelegramClient,
 };
 
 const TG_WEBHOOK_SECRET_TOKEN: &str = "tg_webhook_secret_token";
+const TG_TOKEN: &str = "123456789:ABCdefGhIJKlmNoPQRsTUVwxYZ";
 
 struct TgCall {}
 
@@ -46,8 +49,17 @@ fn test_router() -> (Router, Arc<Mutex<Vec<TgCall>>>) {
     let tg_bot_client = TestBotClient::new();
     let calls = tg_bot_client.calls.clone();
     let app_state = AppState::new(tg_bot_client);
+    let miniapp_state = MiniAppState::new(SessionTokens::new(TG_TOKEN).unwrap());
 
-    (app_router(TG_WEBHOOK_SECRET_TOKEN.into(), app_state), calls)
+    (
+        app_router(
+            TG_WEBHOOK_SECRET_TOKEN.into(),
+            TG_TOKEN,
+            app_state,
+            miniapp_state,
+        ),
+        calls,
+    )
 }
 
 #[tokio::test]

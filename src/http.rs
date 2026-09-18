@@ -2,15 +2,8 @@ pub mod health;
 pub mod miniapp;
 pub mod telegram;
 
-use axum::{
-    Router,
-    middleware::{self},
-    routing::{get, post},
-};
+use axum::{Router, routing::get};
 
-use rustigram_miniapp::BotToken;
-use rustigram_miniapp::BotTokenLayer;
-use std::sync::Arc;
 use tower_cookies::CookieManagerLayer;
 
 use crate::{
