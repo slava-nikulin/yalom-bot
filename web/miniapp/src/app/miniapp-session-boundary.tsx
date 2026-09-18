@@ -1,5 +1,5 @@
 import type { ParentProps } from 'solid-js';
-import { Match, Switch, onMount } from 'solid-js';
+import { Match, Switch, onSettled } from 'solid-js';
 import { useMutation } from '@tanstack/solid-query';
 
 import { establishSession } from '../api/session';
@@ -11,7 +11,9 @@ export default function MiniAppSessionBoundary(props: ParentProps) {
     mutationFn: () => establishSession(getTelegramInitData()),
   }));
 
-  onMount(() => session.mutate());
+  onSettled(() => {
+    void session.mutate();
+  });
 
   return (
     <Switch>

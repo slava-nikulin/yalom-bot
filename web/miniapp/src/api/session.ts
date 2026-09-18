@@ -1,11 +1,10 @@
 export async function establishSession(initData: string): Promise<void> {
-  const response = await fetch('/api/miniapp/session', {
+  const response = await fetch('/miniapp/session', {
     method: 'POST',
     headers: {
-      'content-type': 'application/json',
+      'X-Tma-Init-Data': initData,
     },
     credentials: 'same-origin',
-    body: JSON.stringify({ initData }),
   });
 
   if (!response.ok) {

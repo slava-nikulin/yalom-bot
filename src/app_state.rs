@@ -1,31 +1,18 @@
-use rustigram_api::BotClient;
+use std::sync::Arc;
+
+use crate::security::SessionTokens;
 
 #[derive(Clone)]
 pub struct AppState<Tg> {
     pub telegram: Tg,
+    pub session_tokens: Arc<SessionTokens>,
 }
 
 impl<Tg> AppState<Tg> {
-    pub fn new(telegram: Tg) -> Self {
-        Self { telegram }
-    }
-}
-
-pub trait TelegramClient: Clone + Send + Sync + 'static {
-    fn send_message(
-        &self,
-        chat_id: rustigram_types::user::ChatId,
-        text: String,
-    ) -> impl Future<Output = anyhow::Result<()>> + Send;
-}
-
-impl TelegramClient for BotClient {
-    async fn send_message(
-        &self,
-        chat_id: rustigram_types::user::ChatId,
-        text: String,
-    ) -> anyhow::Result<()> {
-        BotClient::send_message(self, chat_id, text).await?;
-        Ok(())
+    pub fn new(telegram: Tg, session_tokens: SessionTokens) -> Self {
+        Self {
+            telegram,
+            session_tokens: Arc::new(session_tokens),
+        }
     }
 }
