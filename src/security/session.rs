@@ -8,6 +8,9 @@ use pasetors::{
     version4::V4,
 };
 use sha2::Sha256;
+use tower_cookies::cookie::time::{
+    Duration, OffsetDateTime, format_description::well_known::Rfc3339,
+};
 
 #[derive(Debug, thiserror::Error)]
 pub enum SessionIssueError {
@@ -19,6 +22,9 @@ pub enum SessionIssueError {
 pub enum SessionValidationError {
     #[error("invalid session token")]
     InvalidToken(#[from] pasetors::errors::Error),
+
+    #[error("session claims are missing")]
+    MissingClaims,
 
     #[error("session subject is missing")]
     MissingSubject,
@@ -33,8 +39,8 @@ pub struct SessionTokens {
 }
 
 impl SessionTokens {
-    pub fn new(tg_token: &str) -> Result<Self, SessionIssueError> {
-        let hk = Hkdf::<Sha256>::new(None, tg_token.as_bytes());
+    pub fn new(session_key: &str) -> Result<Self, SessionIssueError> {
+        let hk = Hkdf::<Sha256>::new(None, session_key.as_bytes());
         let mut okm = [0u8; 32];
         hk.expand(b"yalom_bot/paseto-v4-local/session/v1", &mut okm)
             .expect("32 bytes is a valid HKDF-SHA256 output length");
@@ -44,10 +50,18 @@ impl SessionTokens {
         })
     }
 
-    pub fn issue(&self, user_id: i64) -> Result<String, SessionIssueError> {
+    pub fn issue(&self, user_id: i64, ttl: i64) -> Result<String, SessionIssueError> {
         let mut claims = Claims::new()?;
 
         claims.subject(&user_id.to_string())?;
+
+        let expiration = OffsetDateTime::now_utc()
+            .checked_add(Duration::seconds(ttl))
+            .expect("time addition should not overflow for a reasonable TTL");
+        let expiration = expiration
+            .format(&Rfc3339)
+            .expect("RFC3339 formatting of a valid timestamp should succeed");
+        claims.expiration(&expiration)?;
 
         let token = local::encrypt(&self.key, &claims, None, None)?;
 
@@ -61,7 +75,9 @@ impl SessionTokens {
 
         let trusted = local::decrypt(&self.key, &untrusted, &rules, None, None)?;
 
-        let claims = trusted.payload_claims().unwrap();
+        let claims = trusted
+            .payload_claims()
+            .ok_or(SessionValidationError::MissingClaims)?;
 
         Ok(SessionIdentity {
             tg_user_id: claims

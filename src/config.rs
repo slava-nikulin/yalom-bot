@@ -6,6 +6,12 @@ use std::net::IpAddr;
 pub struct Config {
     pub telegram: TelegramConfig,
     pub http: HttpConfig,
+    pub miniapp: MiniappConfig,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct MiniappConfig {
+    pub session_key: String,
 }
 
 #[derive(Debug, Deserialize)]

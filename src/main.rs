@@ -58,10 +58,10 @@ async fn main() -> anyhow::Result<()> {
     }
 
     let app_state = AppState::new(tg_bot);
-    let miniapp_state = MiniAppState::new(SessionTokens::new(&cfg.telegram.token)?);
+    let miniapp_state = MiniAppState::new(SessionTokens::new(&cfg.miniapp.session_key)?);
     let app_router = app_router(
         tg_webhook_secret_token,
-        &cfg.telegram.token,
+        &cfg.miniapp.session_key,
         app_state,
         miniapp_state,
     );
