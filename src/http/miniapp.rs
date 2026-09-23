@@ -14,46 +14,48 @@ use tower_cookies::{
 
 use crate::{
     app_state::session_state::MiniAppState,
-    security::session::{SessionIdentity, SessionIssueError, SessionValidationError},
+    security::session::{SESSION_TTL_SECONDS, SessionError, SessionIdentity},
 };
 
-const SESSION_COOKIE_NAME: &str = "__Host-yalom-session";
-pub const SESSION_TTL_SECONDS: i64 = 30 * 60;
+pub const SESSION_COOKIE_NAME: &str = "__Host-yalom-session";
 
 #[derive(Debug, thiserror::Error)]
 enum MiniAppError {
-    #[error("unauthorized")]
-    Unauthorized,
+    #[error("failed to issue session token")]
+    SessionIssue(#[source] SessionError),
 
-    #[error("internal server error")]
-    Internal(#[from] SessionIssueError),
-}
+    #[error("invalid session token")]
+    InvalidSession(#[source] SessionError),
 
-impl From<SessionValidationError> for MiniAppError {
-    fn from(_: SessionValidationError) -> Self {
-        Self::Unauthorized
-    }
+    #[error("missing session token")]
+    MissingSession,
+
+    #[error("missing Telegram user data")]
+    MissingUser,
 }
 
 impl IntoResponse for MiniAppError {
     fn into_response(self) -> Response {
         match self {
-            MiniAppError::Unauthorized => StatusCode::UNAUTHORIZED,
-            MiniAppError::Internal(err) => {
+            MiniAppError::SessionIssue(err) => {
                 tracing::error!(error = %err);
                 StatusCode::INTERNAL_SERVER_ERROR
             }
+            MiniAppError::InvalidSession(_) | MiniAppError::MissingSession => {
+                StatusCode::UNAUTHORIZED
+            }
+            MiniAppError::MissingUser => StatusCode::BAD_REQUEST,
         }
         .into_response()
     }
 }
 
-pub fn router(session_key: &str, miniapp_state: MiniAppState) -> Router {
+pub fn router(tg_bot_token: &str, miniapp_state: MiniAppState) -> Router {
     Router::new()
         .route(
             "/miniapp/session",
             post(issue_session)
-                .route_layer(BotTokenLayer(BotToken(session_key.to_owned())))
+                .route_layer(BotTokenLayer(BotToken(tg_bot_token.to_owned())))
                 .with_state(miniapp_state.clone()),
         )
         .route(
@@ -71,9 +73,12 @@ async fn issue_session(
     cookies: Cookies,
 ) -> Result<StatusCode, MiniAppError> {
     let Some(user) = init_data.user else {
-        return Err(MiniAppError::Unauthorized);
+        return Err(MiniAppError::MissingUser);
     };
-    let token = state.session_tokens.issue(user.id, SESSION_TTL_SECONDS)?;
+    let token = state
+        .session_tokens
+        .issue(user.id)
+        .map_err(MiniAppError::SessionIssue)?;
 
     let cookie = Cookie::build((SESSION_COOKIE_NAME, token))
         .http_only(true)
@@ -96,9 +101,12 @@ async fn validate_session_token(
 ) -> Result<Response, MiniAppError> {
     let auth_token = cookies
         .get(SESSION_COOKIE_NAME)
-        .ok_or(MiniAppError::Unauthorized)?;
+        .ok_or(MiniAppError::MissingSession)?;
 
-    let identity = state.session_tokens.validate(auth_token.value())?;
+    let identity = state
+        .session_tokens
+        .validate(auth_token.value())
+        .map_err(MiniAppError::InvalidSession)?;
 
     request.extensions_mut().insert(identity);
 

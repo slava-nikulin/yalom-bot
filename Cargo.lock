@@ -2347,6 +2347,8 @@ dependencies = [
  "config",
  "constant_time_eq",
  "dotenvy",
+ "form_urlencoded",
+ "hex",
  "hkdf",
  "pasetors",
  "rand",

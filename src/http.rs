@@ -12,14 +12,14 @@ use crate::{
 };
 
 pub fn app_router<Tg: TelegramClient>(
+    tg_bot_token: &str,
     tg_webhook_secret: String,
-    session_key: &str,
     app_state: AppState<Tg>,
     miniapp_state: MiniAppState,
 ) -> Router {
     Router::new()
         .route("/health", get(health::health))
-        .merge(miniapp::router(session_key, miniapp_state.clone()))
+        .merge(miniapp::router(tg_bot_token, miniapp_state.clone()))
         .merge(telegram::router::<Tg>(tg_webhook_secret, app_state.clone()))
         .layer(CookieManagerLayer::new())
 }

@@ -37,3 +37,7 @@ local-dev = ["local-env", "auto-webhook"]
 
 local-env = ["dep:dotenvy"]
 auto-webhook = []
+
+[dev-dependencies]
+form_urlencoded = "1.2.2"
+hex = "0.4.3"
