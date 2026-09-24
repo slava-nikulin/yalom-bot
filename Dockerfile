@@ -2,6 +2,18 @@
 
 FROM --platform=$BUILDPLATFORM tonistiigi/xx:1.8.0 AS xx
 
+FROM --platform=$BUILDPLATFORM node:24-alpine AS frontend-build
+
+RUN npm install --global pnpm@10
+
+WORKDIR /src/web/miniapp
+
+COPY web/miniapp/package.json web/miniapp/pnpm-lock.yaml web/miniapp/pnpm-workspace.yaml ./
+RUN pnpm install --frozen-lockfile
+
+COPY web/miniapp/ ./
+RUN pnpm build
+
 FROM --platform=$BUILDPLATFORM rust:1.98.0-alpine3.24 AS build
 COPY --from=xx / /
 
@@ -49,6 +61,8 @@ COPY --from=build --chmod=0555 \
     /yalom-bot \
     /telegram_admin \
     /usr/local/bin/
+
+COPY --from=frontend-build /src/web/miniapp/dist/client /web/miniapp/dist/client
 
 USER 10001:10001
 

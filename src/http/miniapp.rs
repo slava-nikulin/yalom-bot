@@ -4,13 +4,14 @@ use axum::{
     http::StatusCode,
     middleware::{self, Next},
     response::{IntoResponse, Response},
-    routing::{get, post},
+    routing::{get, get_service, post},
 };
 use rustigram_miniapp::{BotToken, BotTokenLayer, TmaInitData};
 use tower_cookies::{
     Cookie, Cookies,
     cookie::{SameSite, time::Duration},
 };
+use tower_http::services::{ServeDir, ServeFile};
 
 use crate::{
     app_state::session_state::MiniAppState,
@@ -51,7 +52,18 @@ impl IntoResponse for MiniAppError {
 }
 
 pub fn router(tg_bot_token: &str, miniapp_state: MiniAppState) -> Router {
+    //TODO: configure initData max age when rustigram exposes it in TmaInitData https://github.com/meh7an/rustigram/issues/28
+    let static_files = Router::new().fallback_service(ServeDir::new("web/miniapp/dist/client"));
+
     Router::new()
+        .route_service(
+            "/miniapp",
+            get_service(ServeFile::new("web/miniapp/dist/client/index.html")),
+        )
+        .route_service(
+            "/miniapp/",
+            get_service(ServeFile::new("web/miniapp/dist/client/index.html")),
+        )
         .route(
             "/miniapp/session",
             post(issue_session)
@@ -65,6 +77,7 @@ pub fn router(tg_bot_token: &str, miniapp_state: MiniAppState) -> Router {
                 validate_session_token,
             )),
         )
+        .nest("/miniapp", static_files)
 }
 
 async fn issue_session(

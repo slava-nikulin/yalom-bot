@@ -15,7 +15,7 @@ export default function Document(props: ParentProps) {
         <meta charset="utf-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1" />
         <script src="https://telegram.org/js/telegram-web-app.js"></script>
-        <link rel="icon" href="/favicon.ico" />
+        <link rel="icon" href="/miniapp/favicon.ico" />
         <title>Solid App</title>
         <HydrationScript />
       </head>
