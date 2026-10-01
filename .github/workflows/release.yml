@@ -14,6 +14,7 @@ permissions:
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
+  MINIAPP_IMAGE_NAME: ${{ github.repository_owner }}/yalom-miniapp
 
 jobs:
   release:
@@ -45,6 +46,19 @@ jobs:
           tags: |
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+      
+      - name: Build and push miniapp image
+        id: miniapp-build
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: Dockerfile.miniapp
+          platforms: linux/arm64
+          push: true
+          provenance: false
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.MINIAPP_IMAGE_NAME }}:${{ github.sha }}
+            ${{ env.REGISTRY }}/${{ env.MINIAPP_IMAGE_NAME }}:latest
 
       - name: Set up kubectl
         uses: azure/setup-kubectl@v5
@@ -54,15 +68,14 @@ jobs:
       - name: Render production manifests
         run: |
           sed -i \
-            "s/newTag: latest/newTag: ${GITHUB_SHA}/" \
+            "s/newTag: latest/newTag: ${GITHUB_SHA}/g" \
             deploy/k8s/overlays/oci-k3s/kustomization.yaml
 
           kubectl kustomize deploy/k8s/overlays/oci-k3s \
             > /tmp/release.yaml
 
-          if grep -Fq \
-            "${REGISTRY}/${IMAGE_NAME}:latest" \
-            /tmp/release.yaml; then
+          if grep -Fq "${REGISTRY}/${IMAGE_NAME}:latest" /tmp/release.yaml \
+            || grep -Fq "${REGISTRY}/${MINIAPP_IMAGE_NAME}:latest" /tmp/release.yaml; then
             echo "Production manifest still contains :latest"
             exit 1
           fi
@@ -111,7 +124,7 @@ jobs:
           # Job spec contains the image tag and is immutable,
           # so remove a previous completed/failed Job first.
           ssh production \
-            'sudo k3s kubectl delete job telegram-set-webhook \
+            'sudo k3s kubectl delete job telegram-setup \
               --ignore-not-found=true \
               --wait=true'
 
@@ -125,9 +138,14 @@ jobs:
               --timeout=180s'
 
           ssh production \
+            'sudo k3s kubectl rollout status \
+              deployment/yalom-miniapp \
+              --timeout=180s'
+
+          ssh production \
             'sudo k3s kubectl wait \
               --for=condition=complete \
-              job/telegram-set-webhook \
+              job/telegram-setup \
               --timeout=120s'
 
       - name: Keep last 3 images
@@ -138,16 +156,30 @@ jobs:
           min-versions-to-keep: 3
           token: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Keep last 3 miniapp images
+        uses: actions/delete-package-versions@v5
+        with:
+          package-name: yalom-miniapp
+          package-type: container
+          min-versions-to-keep: 3
+          token: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Release summary
         run: |
           {
             echo "### Production release"
             echo
-            echo "Image:"
+            echo "Backend:"
             echo "\`${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}\`"
             echo
-            echo "Digest:"
+            echo "Backend digest:"
             echo "\`${{ steps.build.outputs.digest }}\`"
+            echo
+            echo "Miniapp:"
+            echo "\`${{ env.REGISTRY }}/${{ env.MINIAPP_IMAGE_NAME }}:${{ github.sha }}\`"
+            echo
+            echo "Miniapp digest:"
+            echo "\`${{ steps.miniapp-build.outputs.digest }}\`"
             echo
             echo "Deployment: ✅"
             echo

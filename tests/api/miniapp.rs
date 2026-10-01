@@ -23,7 +23,7 @@ async fn test_session_issue_missing_user_data() {
         .router
         .oneshot(
             Request::builder()
-                .uri("/miniapp/session")
+                .uri("/api/miniapp/session")
                 .method(Method::POST)
                 .body(Body::empty())
                 .unwrap(),
@@ -42,7 +42,7 @@ async fn test_session_issue_malformedt_user_data() {
         .router
         .oneshot(
             Request::builder()
-                .uri("/miniapp/session")
+                .uri("/api/miniapp/session")
                 .method(Method::POST)
                 .header("X-Tma-Init-Data", "wrong data")
                 .body(Body::empty())
@@ -64,7 +64,7 @@ async fn test_session_issue_invalid_hmac() {
         .router
         .oneshot(
             Request::builder()
-                .uri("/miniapp/session")
+                .uri("/api/miniapp/session")
                 .method(Method::POST)
                 .header("X-Tma-Init-Data", init_data)
                 .body(Body::empty())
@@ -73,7 +73,33 @@ async fn test_session_issue_invalid_hmac() {
         .await
         .unwrap();
 
-    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn test_miniapp_session_issue_expired_auth_date() {
+    let app = TestApp::new();
+
+    let init_data = signed_init_data(
+        TG_TOKEN,
+        &test_user(42),
+        now_secs() - SESSION_TTL_SECONDS - 1,
+    );
+
+    let response = app
+        .router
+        .oneshot(
+            Request::builder()
+                .uri("/api/miniapp/session")
+                .method(Method::POST)
+                .header("X-Tma-Init-Data", init_data)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
 }
 
 #[tokio::test]
@@ -86,7 +112,7 @@ async fn test_miniapp_session_issue_happy_path() {
         .router
         .oneshot(
             Request::builder()
-                .uri("/miniapp/session")
+                .uri("/api/miniapp/session")
                 .method(Method::POST)
                 .header("X-Tma-Init-Data", init_data)
                 .body(Body::empty())
@@ -127,7 +153,7 @@ async fn test_menu_unauthorized_cookie_missed() {
         .router
         .oneshot(
             Request::builder()
-                .uri("/miniapp/menu")
+                .uri("/api/miniapp/menu")
                 .method(Method::GET)
                 .body(Body::empty())
                 .unwrap(),
@@ -150,7 +176,7 @@ async fn test_menu_unauthorized_cookie_wrong_token() {
         .router
         .oneshot(
             Request::builder()
-                .uri("/miniapp/menu")
+                .uri("/api/miniapp/menu")
                 .method(Method::GET)
                 .header(header::COOKIE, cookie_header)
                 .body(Body::empty())
@@ -174,7 +200,7 @@ async fn test_menu_happy_path_unimplemented() {
         .clone()
         .oneshot(
             Request::builder()
-                .uri("/miniapp/session")
+                .uri("/api/miniapp/session")
                 .method(Method::POST)
                 .header("X-Tma-Init-Data", init_data)
                 .body(Body::empty())
@@ -199,7 +225,7 @@ async fn test_menu_happy_path_unimplemented() {
     let _response = router
         .oneshot(
             Request::builder()
-                .uri("/miniapp/menu")
+                .uri("/api/miniapp/menu")
                 .method(Method::GET)
                 .header(header::COOKIE, cookie_header)
                 .body(Body::empty())

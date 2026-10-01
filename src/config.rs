@@ -6,18 +6,19 @@ use std::net::IpAddr;
 pub struct Config {
     pub telegram: TelegramConfig,
     pub http: HttpConfig,
-    pub miniapp: MiniappConfig,
 }
 
 #[derive(Debug, Deserialize)]
 pub struct MiniappConfig {
     pub session_key: String,
+    pub url: url::Url,
 }
 
 #[derive(Debug, Deserialize)]
 pub struct TelegramConfig {
     pub token: String,
     pub webhook: WebhookConfig,
+    pub miniapp: MiniappConfig,
 }
 
 #[derive(Debug, Deserialize)]

@@ -9,3 +9,6 @@ resources:
 images:
   - name: ghcr.io/slava-nikulin/yalom-bot
     newTag: latest
+
+  - name: ghcr.io/slava-nikulin/yalom-miniapp
+    newTag: latest

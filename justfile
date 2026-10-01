@@ -18,7 +18,7 @@ webhook-info:
     curl -fsS "https://api.telegram.org/bot${YALOM_TELEGRAM__TOKEN}/getWebhookInfo" | jq
 
 # Set webhook url and webhook secret for the bot
-telegram-set-webhook:
+telegram-setup:
     cargo run --bin telegram_admin --no-default-features
 
 

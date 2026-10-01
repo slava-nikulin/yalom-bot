@@ -17,8 +17,17 @@ spec:
             value: /tg/webhook
         - path:
             type: PathPrefix
-            value: /miniapp
+            value: /api/miniapp
 
       backendRefs:
         - name: yalom-bot
+          port: 80
+
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /miniapp
+
+      backendRefs:
+        - name: yalom-miniapp
           port: 80

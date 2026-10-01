@@ -1,0 +1,44 @@
+apiVersion: apps/v1
+kind: Deployment
+
+metadata:
+  name: yalom-miniapp
+
+spec:
+  replicas: 1
+
+  selector:
+    matchLabels:
+      app: yalom-miniapp
+
+  template:
+    metadata:
+      labels:
+        app: yalom-miniapp
+
+    spec:
+      containers:
+        - name: yalom-miniapp
+          image: ghcr.io/slava-nikulin/yalom-miniapp:latest
+
+          ports:
+            - name: http
+              containerPort: 80
+              protocol: TCP
+
+          readinessProbe:
+            httpGet:
+              path: /miniapp/
+              port: http
+
+          livenessProbe:
+            httpGet:
+              path: /miniapp/
+              port: http
+
+          resources:
+            requests:
+              cpu: 10m
+              memory: 16Mi
+            limits:
+              memory: 64Mi
