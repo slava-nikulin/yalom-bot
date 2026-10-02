@@ -11,5 +11,5 @@ resources:
 
 configMapGenerator:
   - name: yalom-bot-config
-    literals:
+    envs:
       - config.env
