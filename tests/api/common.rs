@@ -13,7 +13,7 @@ use yalom_bot::{
 
 pub const TG_WEBHOOK_SECRET_TOKEN: &str = "tg_webhook_secret_token";
 pub const TG_TOKEN: &str = "123456789:ABCdefGhIJKlmNoPQRsTUVwxYZ";
-pub const SESSION_TOKEN: &str = "miniapp_session_token";
+pub const SESSION_KEY: &str = "miniapp_session_key";
 
 pub struct TgCall {}
 
@@ -54,7 +54,7 @@ impl TestApp {
 
         let app_state = AppState::new(tg_bot_client);
 
-        let miniapp_state = MiniAppState::new(SessionTokens::new(SESSION_TOKEN));
+        let miniapp_state = MiniAppState::new(SessionTokens::new(SESSION_KEY));
 
         let router = app_router(
             TG_TOKEN,

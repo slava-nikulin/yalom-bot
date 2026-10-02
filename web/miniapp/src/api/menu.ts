@@ -5,7 +5,7 @@ export interface MenuState {
 export async function getMenuState(): Promise<MenuState> {
   // TODO: Replace this stub with the real Axum request:
   //
-  // const response = await fetch('/miniapp/menu');
+  // const response = await fetch('/api/miniapp/menu');
   // if (!response.ok) {
   //   throw new Error(`Failed to load menu: ${response.status}`);
   // }

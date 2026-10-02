@@ -21,7 +21,7 @@ COPY web/miniapp/package.json \
      web/miniapp/pnpm-workspace.yaml \
      ./
 
-RUN --mount=type=cache,id=yalom-miniapp-pnpm,target=/pnpm/store \
+RUN --mount=type=cache,id=yalom-bot-miniapp-pnpm,target=/pnpm/store \
     pnpm install --frozen-lockfile
 
 COPY web/miniapp/ ./

@@ -29,5 +29,5 @@ spec:
             value: /miniapp
 
       backendRefs:
-        - name: yalom-miniapp
+        - name: yalom-bot-miniapp
           port: 80

@@ -2,24 +2,24 @@ apiVersion: apps/v1
 kind: Deployment
 
 metadata:
-  name: yalom-miniapp
+  name: yalom-bot-miniapp
 
 spec:
   replicas: 1
 
   selector:
     matchLabels:
-      app: yalom-miniapp
+      app: yalom-bot-miniapp
 
   template:
     metadata:
       labels:
-        app: yalom-miniapp
+        app: yalom-bot-miniapp
 
     spec:
       containers:
-        - name: yalom-miniapp
-          image: ghcr.io/slava-nikulin/yalom-miniapp:latest
+        - name: yalom-bot-miniapp
+          image: ghcr.io/slava-nikulin/yalom-bot-miniapp:latest
 
           ports:
             - name: http

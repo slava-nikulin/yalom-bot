@@ -22,7 +22,7 @@ pub fn router<Tg: TelegramClient>(tg_webhook_secret: String, app_state: AppState
                 Arc::<str>::from(tg_webhook_secret),
                 verify_tg_webhook_secret,
             ))
-            .with_state(app_state.clone()),
+            .with_state(app_state),
     )
 }
 

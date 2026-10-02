@@ -35,7 +35,7 @@ async fn test_session_issue_missing_init_data() {
 }
 
 #[tokio::test]
-async fn test_session_issue_malformedt_user_data() {
+async fn test_session_issue_malformed_init_data() {
     let app = TestApp::new();
 
     let response = app
@@ -77,7 +77,7 @@ async fn test_session_issue_invalid_hmac() {
 }
 
 #[tokio::test]
-async fn test_miniapp_session_issue_expired_auth_date() {
+async fn test_session_issue_expired_auth_date() {
     let app = TestApp::new();
 
     let init_data = signed_init_data(
@@ -103,7 +103,7 @@ async fn test_miniapp_session_issue_expired_auth_date() {
 }
 
 #[tokio::test]
-async fn test_miniapp_session_issue_happy_path() {
+async fn test_session_issue_happy_path() {
     let app = TestApp::new();
 
     let init_data = signed_init_data(TG_TOKEN, &test_user(42), now_secs());
@@ -146,7 +146,7 @@ async fn test_miniapp_session_issue_happy_path() {
 }
 
 #[tokio::test]
-async fn test_menu_unauthorized_cookie_missed() {
+async fn test_menu_unauthorized_missing_cookie() {
     let app = TestApp::new();
 
     let response = app

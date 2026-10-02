@@ -1,27 +1,42 @@
 set dotenv-load
 
 backend_image := "yalom-bot"
-miniapp_image := "yalom-miniapp"
+miniapp_image := "yalom-bot-miniapp"
 
 dev_tag := backend_image + ":dev"
 miniapp_dev_tag := miniapp_image + ":dev"
 
 prod_platform := "linux/arm64"
 
-
 # list available commands.
 default:
     @just --list
 
-# Start a Cloudflare Quick Tunnel for the local HTTP server.
-tunnel:
+# -------------------------------------------------------------------
+# Dev
+# -------------------------------------------------------------------
+
+dev-backend:
+    cargo run --no-default-features --bin yalom-bot
+
+dev-miniapp:
+    cd web/miniapp && pnpm dev
+
+tunnel-backend:
     cloudflared tunnel --url http://localhost:3000
+
+tunnel-miniapp:
+    cloudflared tunnel --url http://localhost:5173
+
+# -------------------------------------------------------------------
+# Telegram
+# -------------------------------------------------------------------
 
 # Show current Telegram webhook information.
 webhook-info:
     curl -fsS "https://api.telegram.org/bot${YALOM_TELEGRAM__TOKEN}/getWebhookInfo" | jq
 
-# Set webhook url and webhook secret for the bot
+# Configure Telegram webhook and Mini App menu button.
 telegram-setup:
     cargo run --bin telegram_admin --no-default-features
 
@@ -42,6 +57,27 @@ test:
 test-all:
     cargo test --locked --all-features
 
+production-build:
+    cargo build --release --no-default-features --locked
+
+# -------------------------------------------------------------------
+# Frontend
+# -------------------------------------------------------------------
+
+frontend-install:
+    cd web/miniapp && pnpm install --frozen-lockfile
+
+frontend-lint:
+    cd web/miniapp && pnpm lint
+
+frontend-typecheck:
+    cd web/miniapp && pnpm typecheck
+
+frontend-build:
+    cd web/miniapp && pnpm build
+
+frontend-check: frontend-lint frontend-typecheck frontend-build
+
 # -------------------------------------------------------------------
 # k8s
 # -------------------------------------------------------------------
@@ -54,14 +90,12 @@ k8s-check:
 # Docker
 # -------------------------------------------------------------------
 
-# build backend for current architecture.
 docker-build:
     docker buildx build \
         --load \
         --tag {{dev_tag}} \
         .
 
-# build miniapp for current architecture.
 docker-build-miniapp:
     docker buildx build \
         --file Dockerfile.miniapp \
@@ -69,7 +103,6 @@ docker-build-miniapp:
         --tag {{miniapp_dev_tag}} \
         .
 
-# build backend for ARM64 architecture.
 docker-build-arm64:
     docker buildx build \
         --platform {{prod_platform}} \
@@ -77,7 +110,6 @@ docker-build-arm64:
         --tag {{backend_image}}:arm64 \
         .
 
-# build miniapp for ARM64 architecture.
 docker-build-miniapp-arm64:
     docker buildx build \
         --file Dockerfile.miniapp \
@@ -86,34 +118,25 @@ docker-build-miniapp-arm64:
         --tag {{miniapp_image}}:arm64 \
         .
 
-# check backend for both archs
 docker-check:
     docker buildx build \
         --platform linux/amd64,linux/arm64 \
         .
 
-# check miniapp for both archs
 docker-check-miniapp:
     docker buildx build \
         --file Dockerfile.miniapp \
         --platform linux/amd64,linux/arm64 \
         .
 
-# check backend and miniapp
 docker-check-all: docker-check docker-check-miniapp
-
-# run backend
-docker-run: docker-build
-    docker run \
-        --rm \
-        --init \
-        --env-file .env \
-        --publish 3000:3000 \
-        {{dev_tag}}
 
 # -------------------------------------------------------------------
 # Checks
 # -------------------------------------------------------------------
 
-check: fmt clippy test k8s-check
-check-full: check docker-check-all
+# Fast feedback loop.
+check: fmt clippy test k8s-check frontend-lint frontend-typecheck
+
+# Everything expected to succeed before merge/release.
+check-full: check test-all production-build frontend-build docker-check-all

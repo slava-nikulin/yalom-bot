@@ -10,5 +10,5 @@ images:
   - name: ghcr.io/slava-nikulin/yalom-bot
     newTag: latest
 
-  - name: ghcr.io/slava-nikulin/yalom-miniapp
+  - name: ghcr.io/slava-nikulin/yalom-bot-miniapp
     newTag: latest

@@ -33,7 +33,7 @@ enum MiniAppErr {
     #[error("missing Telegram user data")]
     MissingUser,
 
-    #[error("missing initData")]
+    #[error("invalid initData")]
     InvalidInitData,
 }
 
@@ -119,7 +119,7 @@ async fn validate_session_token(
     Ok(next.run(request).await)
 }
 
-//TODO: potentialy could be removed after this resolved https://github.com/meh7an/rustigram/issues/28
+// TODO: Replace with Rustigram middleware once https://github.com/meh7an/rustigram/issues/28 is resolved.
 async fn validate_init_data(
     State(bot_token): State<String>,
     mut request: Request,

@@ -13,8 +13,8 @@ permissions:
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_NAME: ${{ github.repository }}
-  MINIAPP_IMAGE_NAME: ${{ github.repository_owner }}/yalom-miniapp
+  BACKEND_IMAGE_NAME: ${{ github.repository }}
+  MINIAPP_IMAGE_NAME: ${{ github.repository_owner }}/yalom-bot-miniapp
 
 jobs:
   release:
@@ -36,7 +36,7 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build and push production image
-        id: build
+        id: backend-build
         uses: docker/build-push-action@v7
         with:
           context: .
@@ -44,8 +44,8 @@ jobs:
           push: true
           provenance: false
           tags: |
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+            ${{ env.REGISTRY }}/${{ env.BACKEND_IMAGE_NAME }}:${{ github.sha }}
+            ${{ env.REGISTRY }}/${{ env.BACKEND_IMAGE_NAME }}:latest
       
       - name: Build and push miniapp image
         id: miniapp-build
@@ -74,7 +74,7 @@ jobs:
           kubectl kustomize deploy/k8s/overlays/oci-k3s \
             > /tmp/release.yaml
 
-          if grep -Fq "${REGISTRY}/${IMAGE_NAME}:latest" /tmp/release.yaml \
+          if grep -Fq "${REGISTRY}/${BACKEND_IMAGE_NAME}:latest" /tmp/release.yaml \
             || grep -Fq "${REGISTRY}/${MINIAPP_IMAGE_NAME}:latest" /tmp/release.yaml; then
             echo "Production manifest still contains :latest"
             exit 1
@@ -139,7 +139,7 @@ jobs:
 
           ssh production \
             'sudo k3s kubectl rollout status \
-              deployment/yalom-miniapp \
+              deployment/yalom-bot-miniapp \
               --timeout=180s'
 
           ssh production \
@@ -159,7 +159,7 @@ jobs:
       - name: Keep last 3 miniapp images
         uses: actions/delete-package-versions@v5
         with:
-          package-name: yalom-miniapp
+          package-name: yalom-bot-miniapp
           package-type: container
           min-versions-to-keep: 3
           token: ${{ secrets.GITHUB_TOKEN }}
@@ -170,10 +170,10 @@ jobs:
             echo "### Production release"
             echo
             echo "Backend:"
-            echo "\`${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}\`"
+            echo "\`${{ env.REGISTRY }}/${{ env.BACKEND_IMAGE_NAME }}:${{ github.sha }}\`"
             echo
             echo "Backend digest:"
-            echo "\`${{ steps.build.outputs.digest }}\`"
+            echo "\`${{ steps.backend-build.outputs.digest }}\`"
             echo
             echo "Miniapp:"
             echo "\`${{ env.REGISTRY }}/${{ env.MINIAPP_IMAGE_NAME }}:${{ github.sha }}\`"
@@ -183,5 +183,5 @@ jobs:
             echo
             echo "Deployment: ✅"
             echo
-            echo "Telegram webhook: ✅"
+            echo "Telegram setup: ✅"
           } >> "$GITHUB_STEP_SUMMARY"

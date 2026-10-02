@@ -19,7 +19,7 @@ pub fn app_router<Tg: TelegramClient>(
 ) -> Router {
     Router::new()
         .route("/health", get(health::health))
-        .merge(miniapp::router(tg_bot_token, miniapp_state.clone()))
-        .merge(telegram::router::<Tg>(tg_webhook_secret, app_state.clone()))
+        .merge(miniapp::router(tg_bot_token, miniapp_state))
+        .merge(telegram::router::<Tg>(tg_webhook_secret, app_state))
         .layer(CookieManagerLayer::new())
 }
