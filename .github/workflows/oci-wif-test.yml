@@ -458,7 +458,7 @@ jobs:
 
             try:
                 bundle_response = secrets_client.get_secret_bundle_by_name(
-                    secret_name="yalom-telegram-token",
+                    secret_name="yalom-bot-telegram-token",
                     vault_id=vault_id,
                     stage="CURRENT",
                 )
@@ -479,7 +479,7 @@ jobs:
                 )
 
             print("Vault request succeeded")
-            print("Secret yalom-telegram-token was retrieved")
+            print("Secret yalom-bot-telegram-token was retrieved")
             print("Secret value was NOT printed or decoded")
 
 
