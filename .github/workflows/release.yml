@@ -249,11 +249,27 @@ jobs:
           deadline=$((SECONDS + 570))
 
           while (( SECONDS < deadline )); do
-            execution="$(
+            error_file="$(mktemp)"
+
+            if ! execution="$(
               oci instance-agent command-execution get \
                 --command-id "$command_id" \
-                --instance-id "$INSTANCE_ID"
+                --instance-id "$INSTANCE_ID" \
+                2>"$error_file"
             )"
+            then
+              if grep -q '"status": 404' "$error_file"; then
+                rm -f "$error_file"
+                sleep 5
+                continue
+              fi
+
+              cat "$error_file" >&2
+              rm -f "$error_file"
+              exit 1
+            fi
+
+            rm -f "$error_file"
 
             state="$(
               jq -r '.data."lifecycle-state"' \
