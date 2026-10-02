@@ -362,3 +362,19 @@ echo
 k3s kubectl \
     -n gateway-system \
     get certificate
+
+
+echo "Configuring OCI Run Command sudo access..."
+
+sudoers_file=/etc/sudoers.d/101-oracle-cloud-agent-run-command
+sudoers_tmp="$(mktemp)"
+
+cat >"${sudoers_tmp}" <<'EOF'
+ocarun ALL=(root) NOPASSWD: /usr/local/bin/k3s
+EOF
+
+chmod 440 "${sudoers_tmp}"
+visudo -cf "${sudoers_tmp}"
+
+install -m 440 "${sudoers_tmp}" "${sudoers_file}"
+rm -f "${sudoers_tmp}"
