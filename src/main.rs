@@ -2,7 +2,12 @@ use rustigram_api::BotClient;
 use std::{net::SocketAddr, sync::Arc};
 use tokio::signal::unix::{SignalKind, signal};
 use tracing_subscriber::EnvFilter;
-use yalom_bot::{app_state::AppState, config::Config, http::app_router};
+use yalom_bot::{
+    app_state::{AppState, session_state::MiniAppState},
+    config::Config,
+    http::app_router,
+    security::session::SessionTokens,
+};
 
 #[cfg(feature = "local-dev")]
 use yalom_bot::security::generate_secret_token;
@@ -53,7 +58,13 @@ async fn main() -> anyhow::Result<()> {
     }
 
     let app_state = AppState::new(tg_bot);
-    let app_router = app_router(tg_webhook_secret_token, app_state);
+    let miniapp_state = MiniAppState::new(SessionTokens::new(&cfg.telegram.miniapp.session_key));
+    let app_router = app_router(
+        &cfg.telegram.token,
+        tg_webhook_secret_token,
+        app_state,
+        miniapp_state,
+    );
 
     let mut sigterm = signal(SignalKind::terminate())?;
     let mut sigint = signal(SignalKind::interrupt())?;

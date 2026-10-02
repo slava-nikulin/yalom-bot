@@ -1,0 +1,9 @@
+:80 {
+	redir /miniapp /miniapp/ 308
+
+	handle_path /miniapp/* {
+		root * /srv
+		try_files {path} /index.html
+		file_server
+	}
+}

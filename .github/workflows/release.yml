@@ -13,7 +13,8 @@ permissions:
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_NAME: ${{ github.repository }}
+  BACKEND_IMAGE_NAME: ${{ github.repository }}
+  MINIAPP_IMAGE_NAME: ${{ github.repository_owner }}/yalom-bot-miniapp
 
 jobs:
   release:
@@ -35,7 +36,7 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build and push production image
-        id: build
+        id: backend-build
         uses: docker/build-push-action@v7
         with:
           context: .
@@ -43,8 +44,21 @@ jobs:
           push: true
           provenance: false
           tags: |
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+            ${{ env.REGISTRY }}/${{ env.BACKEND_IMAGE_NAME }}:${{ github.sha }}
+            ${{ env.REGISTRY }}/${{ env.BACKEND_IMAGE_NAME }}:latest
+      
+      - name: Build and push miniapp image
+        id: miniapp-build
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: Dockerfile.miniapp
+          platforms: linux/arm64
+          push: true
+          provenance: false
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.MINIAPP_IMAGE_NAME }}:${{ github.sha }}
+            ${{ env.REGISTRY }}/${{ env.MINIAPP_IMAGE_NAME }}:latest
 
       - name: Set up kubectl
         uses: azure/setup-kubectl@v5
@@ -54,15 +68,14 @@ jobs:
       - name: Render production manifests
         run: |
           sed -i \
-            "s/newTag: latest/newTag: ${GITHUB_SHA}/" \
+            "s/newTag: latest/newTag: ${GITHUB_SHA}/g" \
             deploy/k8s/overlays/oci-k3s/kustomization.yaml
 
           kubectl kustomize deploy/k8s/overlays/oci-k3s \
             > /tmp/release.yaml
 
-          if grep -Fq \
-            "${REGISTRY}/${IMAGE_NAME}:latest" \
-            /tmp/release.yaml; then
+          if grep -Fq "${REGISTRY}/${BACKEND_IMAGE_NAME}:latest" /tmp/release.yaml \
+            || grep -Fq "${REGISTRY}/${MINIAPP_IMAGE_NAME}:latest" /tmp/release.yaml; then
             echo "Production manifest still contains :latest"
             exit 1
           fi
@@ -71,6 +84,7 @@ jobs:
         env:
           OCI_SSH_HOST: ${{ vars.OCI_SSH_HOST }}
           OCI_SSH_PORT: ${{ vars.OCI_SSH_PORT }}
+          OCI_SSH_USER: ${{ vars.OCI_SSH_USER }}
           OCI_SSH_PRIVATE_KEY: ${{ secrets.OCI_SSH_PRIVATE_KEY }}
           OCI_SSH_KNOWN_HOSTS: ${{ secrets.OCI_SSH_KNOWN_HOSTS }}
         run: |
@@ -84,11 +98,17 @@ jobs:
             > ~/.ssh/known_hosts
           chmod 600 ~/.ssh/known_hosts
 
+          : "${OCI_SSH_HOST:?OCI_SSH_HOST is not configured}"
+          : "${OCI_SSH_PORT:?OCI_SSH_PORT is not configured}"
+          : "${OCI_SSH_USER:?OCI_SSH_USER is not configured}"
+          : "${OCI_SSH_PRIVATE_KEY:?OCI_SSH_PRIVATE_KEY is not configured}"
+          : "${OCI_SSH_KNOWN_HOSTS:?OCI_SSH_KNOWN_HOSTS is not configured}"
+
           cat > ~/.ssh/config <<EOF
           Host production
               HostName ${OCI_SSH_HOST}
               Port ${OCI_SSH_PORT}
-              User ubuntu
+              User ${OCI_SSH_USER}
               IdentityFile ~/.ssh/oci_ed25519
               IdentitiesOnly yes
               BatchMode yes
@@ -104,7 +124,7 @@ jobs:
           # Job spec contains the image tag and is immutable,
           # so remove a previous completed/failed Job first.
           ssh production \
-            'sudo k3s kubectl delete job telegram-set-webhook \
+            'sudo k3s kubectl delete job telegram-setup \
               --ignore-not-found=true \
               --wait=true'
 
@@ -118,9 +138,14 @@ jobs:
               --timeout=180s'
 
           ssh production \
+            'sudo k3s kubectl rollout status \
+              deployment/yalom-bot-miniapp \
+              --timeout=180s'
+
+          ssh production \
             'sudo k3s kubectl wait \
               --for=condition=complete \
-              job/telegram-set-webhook \
+              job/telegram-setup \
               --timeout=120s'
 
       - name: Keep last 3 images
@@ -131,18 +156,32 @@ jobs:
           min-versions-to-keep: 3
           token: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Keep last 3 miniapp images
+        uses: actions/delete-package-versions@v5
+        with:
+          package-name: yalom-bot-miniapp
+          package-type: container
+          min-versions-to-keep: 3
+          token: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Release summary
         run: |
           {
             echo "### Production release"
             echo
-            echo "Image:"
-            echo "\`${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}\`"
+            echo "Backend:"
+            echo "\`${{ env.REGISTRY }}/${{ env.BACKEND_IMAGE_NAME }}:${{ github.sha }}\`"
             echo
-            echo "Digest:"
-            echo "\`${{ steps.build.outputs.digest }}\`"
+            echo "Backend digest:"
+            echo "\`${{ steps.backend-build.outputs.digest }}\`"
+            echo
+            echo "Miniapp:"
+            echo "\`${{ env.REGISTRY }}/${{ env.MINIAPP_IMAGE_NAME }}:${{ github.sha }}\`"
+            echo
+            echo "Miniapp digest:"
+            echo "\`${{ steps.miniapp-build.outputs.digest }}\`"
             echo
             echo "Deployment: ✅"
             echo
-            echo "Telegram webhook: ✅"
+            echo "Telegram setup: ✅"
           } >> "$GITHUB_STEP_SUMMARY"

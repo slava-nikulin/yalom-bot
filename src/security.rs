@@ -1,3 +1,5 @@
+pub mod session;
+
 use rand::RngExt;
 
 const CHARSET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-";

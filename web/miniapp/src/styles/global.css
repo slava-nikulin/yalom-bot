@@ -1,0 +1,26 @@
+:root {
+  --app-bg: var(--tg-theme-bg-color, #fafafa);
+  --app-text: var(--tg-theme-text-color, #18181b);
+  --app-hint: var(--tg-theme-hint-color, #71717a);
+
+  --app-surface: var(--tg-theme-section-bg-color, #ffffff);
+  --app-border: var(--tg-theme-section-separator-color, #e4e4e7);
+
+  --app-button: var(--tg-theme-button-color, #18181b);
+  --app-button-text: var(--tg-theme-button-text-color, #ffffff);
+
+  --app-destructive: var(--tg-theme-destructive-text-color, #b91c1c);
+
+  --app-safe-top: var(--tg-content-safe-area-inset-top, 0px);
+  --app-safe-right: var(--tg-content-safe-area-inset-right, 0px);
+  --app-safe-bottom: var(--tg-content-safe-area-inset-bottom, 0px);
+  --app-safe-left: var(--tg-content-safe-area-inset-left, 0px);
+}
+
+html,
+body {
+  margin: 0;
+  min-height: 100%;
+  background: var(--app-bg);
+  color: var(--app-text);
+}

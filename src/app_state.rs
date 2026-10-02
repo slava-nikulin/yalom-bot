@@ -1,14 +1,12 @@
-use rustigram_api::BotClient;
-use std::sync::Arc;
+pub mod session_state;
 
-pub struct AppState {
-    pub telegram: BotClient,
+#[derive(Clone)]
+pub struct AppState<Tg> {
+    pub telegram: Tg,
 }
 
-pub type SharedState = Arc<AppState>;
-
-impl AppState {
-    pub fn new(telegram: BotClient) -> SharedState {
-        Arc::new(AppState { telegram })
+impl<Tg> AppState<Tg> {
+    pub fn new(telegram: Tg) -> Self {
+        Self { telegram }
     }
 }

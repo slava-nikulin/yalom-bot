@@ -1,28 +1,18 @@
 use axum::{
-    Router,
     body::Body,
     http::{Method, Request, StatusCode},
 };
-use rustigram_api::BotClient;
 use rustigram_types::{Message, Update, UpdateKind};
 use tower::util::ServiceExt;
-use yalom_bot::{app_state::AppState, http::app_router};
 
-const TG_BOT_SECRET_TOKEN: &str = "123456789:ABC-DEF1234ghIkl-zyx57W2v1u123ew11";
-const TG_WEBHOOK_SECRET_TOKEN: &str = "tg_webhook_secret_token";
-
-fn test_router() -> Router {
-    let tg_bot = BotClient::from_token(TG_BOT_SECRET_TOKEN).unwrap();
-    let app_state = AppState::new(tg_bot);
-
-    app_router(TG_WEBHOOK_SECRET_TOKEN.into(), app_state)
-}
+use crate::common::{TG_WEBHOOK_SECRET_TOKEN, TestApp};
 
 #[tokio::test]
 async fn test_health() {
-    let router = test_router();
+    let app = TestApp::new();
 
-    let response = router
+    let response = app
+        .router
         .oneshot(
             Request::builder()
                 .uri("/health")
@@ -38,12 +28,13 @@ async fn test_health() {
 
 #[tokio::test]
 async fn test_webhook_valid_token() {
-    let router = test_router();
+    let app = TestApp::new();
 
     let mut message = Message::default();
     message.message_id = 1;
     message.date = 0;
     message.chat.id = 123;
+    message.text = Some("foo".to_string());
 
     let update = Update {
         update_id: 1,
@@ -51,7 +42,8 @@ async fn test_webhook_valid_token() {
     };
     let body = serde_json::to_vec(&update).unwrap();
 
-    let response = router
+    let response = app
+        .router
         .oneshot(
             Request::builder()
                 .uri("/tg/webhook")
@@ -65,16 +57,18 @@ async fn test_webhook_valid_token() {
         .unwrap();
 
     assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(app.tg_calls.lock().unwrap().len(), 1);
 }
 
 #[tokio::test]
 async fn test_webhook_invalid_token() {
-    let router = test_router();
+    let app = TestApp::new();
 
     let mut message = Message::default();
     message.message_id = 1;
     message.date = 0;
     message.chat.id = 123;
+    message.text = Some("foo".to_string());
 
     let update = Update {
         update_id: 1,
@@ -82,7 +76,8 @@ async fn test_webhook_invalid_token() {
     };
     let body = serde_json::to_vec(&update).unwrap();
 
-    let response = router
+    let response = app
+        .router
         .oneshot(
             Request::builder()
                 .uri("/tg/webhook")
@@ -96,13 +91,15 @@ async fn test_webhook_invalid_token() {
         .unwrap();
 
     assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    assert_eq!(app.tg_calls.lock().unwrap().len(), 0);
 }
 
 #[tokio::test]
 async fn test_webhook_valid_token_invalid_body() {
-    let router = test_router();
+    let app = TestApp::new();
 
-    let response = router
+    let response = app
+        .router
         .oneshot(
             Request::builder()
                 .uri("/tg/webhook")
@@ -116,4 +113,5 @@ async fn test_webhook_valid_token_invalid_body() {
         .unwrap();
 
     assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(app.tg_calls.lock().unwrap().len(), 0);
 }

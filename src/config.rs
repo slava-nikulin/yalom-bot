@@ -9,9 +9,16 @@ pub struct Config {
 }
 
 #[derive(Debug, Deserialize)]
+pub struct MiniAppConfig {
+    pub session_key: String,
+    pub url: url::Url,
+}
+
+#[derive(Debug, Deserialize)]
 pub struct TelegramConfig {
     pub token: String,
     pub webhook: WebhookConfig,
+    pub miniapp: MiniAppConfig,
 }
 
 #[derive(Debug, Deserialize)]

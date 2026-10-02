@@ -1,0 +1,122 @@
+name: OCI WIF test
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  test:
+    if: github.ref == 'refs/heads/main'
+    environment: production
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Install OCI SDK
+        run: |
+          python -m pip install 'oci>=2.187.1,<3' requests
+
+      - name: Test OCI WIF and Vault access
+        env:
+          OCI_WIF_CLIENT_ID: ${{ vars.OCI_WIF_CLIENT_ID }}
+          OCI_WIF_CLIENT_SECRET: ${{ secrets.OCI_WIF_CLIENT_SECRET }}
+          OCI_DOMAIN_URL: ${{ vars.OCI_DOMAIN_URL }}
+          OCI_REGION: ${{ vars.OCI_REGION }}
+          OCI_VAULT_ID: ${{ vars.OCI_VAULT_ID }}
+        run: |
+          python <<'PY'
+          import os
+
+          import oci
+          import requests
+
+          from cryptography.hazmat.primitives import serialization
+          from cryptography.hazmat.primitives.asymmetric import rsa
+
+
+          # 1. Получаем GitHub OIDC JWT.
+          response = requests.get(
+              os.environ["ACTIONS_ID_TOKEN_REQUEST_URL"],
+              headers={
+                  "Authorization":
+                      f"Bearer {os.environ['ACTIONS_ID_TOKEN_REQUEST_TOKEN']}"
+              },
+              params={"audience": "oci-wif"},
+          )
+          response.raise_for_status()
+          github_jwt = response.json()["value"]
+
+          print("GitHub OIDC token received")
+
+
+          # 2. Генерируем одноразовую пару ключей для OCI RPST.
+          private_key = rsa.generate_private_key(
+              public_exponent=65537,
+              key_size=2048,
+          )
+
+          private_pem = private_key.private_bytes(
+              encoding=serialization.Encoding.PEM,
+              format=serialization.PrivateFormat.PKCS8,
+              encryption_algorithm=serialization.NoEncryption(),
+          )
+
+          public_pem = private_key.public_key().public_bytes(
+              encoding=serialization.Encoding.PEM,
+              format=serialization.PublicFormat.SubjectPublicKeyInfo,
+          ).decode()
+
+
+          # 3. GitHub JWT -> OCI RPST.
+          response = requests.post(
+              f"{os.environ['OCI_DOMAIN_URL'].rstrip('/')}/oauth2/v1/token",
+              auth=(
+                  os.environ["OCI_WIF_CLIENT_ID"],
+                  os.environ["OCI_WIF_CLIENT_SECRET"],
+              ),
+              data={
+                  "grant_type":
+                      "urn:ietf:params:oauth:grant-type:token-exchange",
+                  "requested_token_type":
+                      "urn:oci:token-type:oci-rpst",
+                  "subject_token_type": "jwt",
+                  "subject_token": github_jwt,
+                  "public_key": public_pem,
+                  "res_type": "githubactions",
+                  "rpst_exp": "20",
+              },
+          )
+          response.raise_for_status()
+
+          rpst = response.json()["token"]
+
+          print("OCI RPST received")
+
+
+          # 4. Используем RPST как resource principal.
+          signer = oci.auth.signers.EphemeralResourcePrincipalSigner(
+              session_token=rpst,
+              private_key=private_pem.decode(),
+              region=os.environ["OCI_REGION"],
+          )
+
+          client = oci.secrets.SecretsClient(
+              {"region": os.environ["OCI_REGION"]},
+              signer=signer,
+          )
+
+
+          # 5. Проверяем чтение одного секрета.
+          bundle = client.get_secret_bundle_by_name(
+              secret_name="yalom-telegram-token",
+              vault_id=os.environ["OCI_VAULT_ID"],
+              stage="CURRENT",
+          ).data
+
+          if not bundle.secret_bundle_content.content:
+              raise RuntimeError("Secret content is empty")
+
+          print("Vault secret successfully retrieved")
+          PY
