@@ -54,6 +54,8 @@ jobs:
             get_secret yalom-bot-webhook-secret-token
           )"
 
+          export YALOM_TELEGRAM__MINIAPP__SESSION_KEY=unused-by-telegram-admin
+
           echo "::add-mask::${YALOM_TELEGRAM__TOKEN}"
           echo "::add-mask::${YALOM_TELEGRAM__WEBHOOK__SECRET_TOKEN}"
 
