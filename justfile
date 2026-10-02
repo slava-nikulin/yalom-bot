@@ -26,7 +26,9 @@ tunnel-backend:
     cloudflared tunnel --url http://localhost:3000
 
 tunnel-miniapp:
-    cloudflared tunnel --url http://localhost:5173
+    cloudflared tunnel \
+        --url http://localhost:5173 \
+        --http-host-header localhost:5173
 
 # -------------------------------------------------------------------
 # Telegram
@@ -139,4 +141,4 @@ docker-check-all: docker-check docker-check-miniapp
 check: fmt clippy test k8s-check frontend-lint frontend-typecheck
 
 # Everything expected to succeed before merge/release.
-check-full: check test-all production-build frontend-build docker-check-all
+check-full: frontend-install check test-all production-build frontend-build docker-check-all
