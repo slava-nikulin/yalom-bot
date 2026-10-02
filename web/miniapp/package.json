@@ -1,6 +1,6 @@
 {
-  "name": "example-basic",
-  "version": "0.0.0",
+  "name": "yalom-bot-miniapp",
+  "version": "0.0.1",
   "description": "",
   "type": "module",
   "scripts": {

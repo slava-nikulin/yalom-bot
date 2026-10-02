@@ -16,7 +16,7 @@ use crate::common::{
 };
 
 #[tokio::test]
-async fn test_session_issue_missing_user_data() {
+async fn test_session_issue_missing_init_data() {
     let app = TestApp::new();
 
     let response = app

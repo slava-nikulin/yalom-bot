@@ -1,11 +1,15 @@
 set dotenv-load
 
-image := "yalom-bot"
-dev_tag := image + ":dev"
+backend_image := "yalom-bot"
+miniapp_image := "yalom-miniapp"
+
+dev_tag := backend_image + ":dev"
+miniapp_dev_tag := miniapp_image + ":dev"
+
 prod_platform := "linux/arm64"
 
 
-# Показать доступные команды.
+# list available commands.
 default:
     @just --list
 
@@ -38,33 +42,67 @@ test:
 test-all:
     cargo test --locked --all-features
 
+# -------------------------------------------------------------------
+# k8s
+# -------------------------------------------------------------------
+
+k8s-check:
+    kubectl kustomize deploy/k8s/overlays/oci-k3s >/dev/null
+
 
 # -------------------------------------------------------------------
 # Docker
 # -------------------------------------------------------------------
 
-# Собрать образ под текущую архитектуру.
+# build backend for current architecture.
 docker-build:
     docker buildx build \
         --load \
         --tag {{dev_tag}} \
         .
 
-# Собрать production ARM64 image.
+# build miniapp for current architecture.
+docker-build-miniapp:
+    docker buildx build \
+        --file Dockerfile.miniapp \
+        --load \
+        --tag {{miniapp_dev_tag}} \
+        .
+
+# build backend for ARM64 architecture.
 docker-build-arm64:
     docker buildx build \
         --platform {{prod_platform}} \
         --load \
-        --tag {{image}}:arm64 \
+        --tag {{backend_image}}:arm64 \
         .
 
-# Проверить сборку обеих поддерживаемых архитектур.
+# build miniapp for ARM64 architecture.
+docker-build-miniapp-arm64:
+    docker buildx build \
+        --file Dockerfile.miniapp \
+        --platform {{prod_platform}} \
+        --load \
+        --tag {{miniapp_image}}:arm64 \
+        .
+
+# check backend for both archs
 docker-check:
     docker buildx build \
         --platform linux/amd64,linux/arm64 \
         .
 
-# Запустить локально.
+# check miniapp for both archs
+docker-check-miniapp:
+    docker buildx build \
+        --file Dockerfile.miniapp \
+        --platform linux/amd64,linux/arm64 \
+        .
+
+# check backend and miniapp
+docker-check-all: docker-check docker-check-miniapp
+
+# run backend
 docker-run: docker-build
     docker run \
         --rm \
@@ -73,9 +111,9 @@ docker-run: docker-build
         --publish 3000:3000 \
         {{dev_tag}}
 
-
 # -------------------------------------------------------------------
 # Checks
 # -------------------------------------------------------------------
 
-check: fmt clippy test docker-build
+check: fmt clippy test k8s-check
+check-full: check docker-check-all
