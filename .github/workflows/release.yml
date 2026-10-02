@@ -90,6 +90,14 @@ jobs:
           #!/usr/bin/env bash
           set -Eeuo pipefail
 
+          lock_file="/tmp/yalom-release.lock"
+          exec 9>"$lock_file"
+
+          if ! flock -n 9; then
+            echo "Another deployment is already running."
+            exit 1
+          fi
+
           manifest="$(mktemp)"
           trap 'rm -f "$manifest"' EXIT
 
@@ -195,6 +203,7 @@ jobs:
           echo "namespace=${namespace}" >> "$GITHUB_OUTPUT"
 
       - name: Deploy to production
+        timeout-minutes: 10
         env:
           INSTANCE_ID: ${{ steps.instance.outputs.instance-id }}
           COMPARTMENT_ID: ${{ steps.instance.outputs.compartment-id }}
@@ -229,7 +238,7 @@ jobs:
               --compartment-id "$COMPARTMENT_ID" \
               --target file:///tmp/command-target.json \
               --content file:///tmp/command-content.json \
-              --timeout-in-seconds 600 \
+              --timeout-in-seconds 540 \
               --display-name "yalom-release-${GITHUB_SHA}" \
               --query data.id \
               --raw-output
@@ -237,7 +246,9 @@ jobs:
 
           echo "Run Command: ${command_id}"
 
-          while true; do
+          deadline=$((SECONDS + 570))
+
+          while (( SECONDS < deadline )); do
             execution="$(
               oci instance-agent command-execution get \
                 --command-id "$command_id" \
@@ -277,6 +288,14 @@ jobs:
                 ;;
             esac
           done
+
+          echo "Timed out waiting for Run Command"
+
+          oci instance-agent command cancel \
+            --command-id "$command_id" \
+            --force || true
+
+          exit 1
 
       - name: Keep last 3 backend images
         uses: actions/delete-package-versions@v5
