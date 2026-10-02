@@ -249,32 +249,35 @@ jobs:
           deadline=$((SECONDS + 570))
 
           while (( SECONDS < deadline )); do
-            error_file="$(mktemp)"
-
-            if ! execution="$(
-              oci instance-agent command-execution get \
-                --command-id "$command_id" \
+            execution="$(
+              oci instance-agent command-execution list \
+                --compartment-id "$COMPARTMENT_ID" \
                 --instance-id "$INSTANCE_ID" \
-                2>"$error_file"
+                --all \
+                | jq -c \
+                    --arg command_id "$command_id" \
+                    '.data[]
+                    | select(."instance-agent-command-id" == $command_id)' \
+                | head -n1
             )"
-            then
-              if grep -q '"status": 404' "$error_file"; then
-                rm -f "$error_file"
-                sleep 5
-                continue
-              fi
 
-              cat "$error_file" >&2
-              rm -f "$error_file"
-              exit 1
+            if [[ -z "$execution" ]]; then
+              echo "Waiting for Run Command execution to appear..."
+              sleep 5
+              continue
             fi
 
-            rm -f "$error_file"
+            state="$(jq -r '."lifecycle-state"' <<< "$execution")"
+            delivery="$(jq -r '."delivery-state"' <<< "$execution")"
 
-            state="$(
-              jq -r '.data."lifecycle-state"' \
-                <<< "$execution"
-            )"
+            echo "Run Command: delivery=${delivery}, state=${state}"
+
+            case "$delivery" in
+              EXPIRED)
+                echo "Run Command delivery expired before the instance acknowledged it."
+                exit 1
+                ;;
+            esac
 
             case "$state" in
               ACCEPTED|IN_PROGRESS)
@@ -282,17 +285,13 @@ jobs:
                 ;;
 
               SUCCEEDED)
-                jq -r '.data.content.text // empty' \
-                  <<< "$execution"
+                jq -r '.content.text // empty' <<< "$execution"
                 exit 0
                 ;;
 
               FAILED|TIMED_OUT|CANCELED)
-                jq -r '.data.content.text // empty' \
-                  <<< "$execution"
-
-                jq -r '.data.content.message // empty' \
-                  <<< "$execution"
+                jq -r '.content.text // empty' <<< "$execution"
+                jq -r '.content.message // empty' <<< "$execution"
 
                 echo "Deployment failed: ${state}"
                 exit 1
@@ -304,6 +303,14 @@ jobs:
                 ;;
             esac
           done
+
+          echo "Timed out waiting for Run Command"
+
+          oci instance-agent command cancel \
+            --command-id "$command_id" \
+            --force || true
+
+          exit 1
 
           echo "Timed out waiting for Run Command"
 
