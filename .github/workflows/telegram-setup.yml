@@ -1,0 +1,65 @@
+name: Telegram setup
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  setup:
+    if: github.ref == 'refs/heads/main'
+    environment: production
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Set up OCI
+        uses: ./.github/actions/oci-wif
+        with:
+          client-id: ${{ vars.OCI_WIF_CLIENT_ID }}
+          client-secret: ${{ secrets.OCI_WIF_CLIENT_SECRET }}
+          domain-url: ${{ vars.OCI_DOMAIN_URL }}
+          region: ${{ vars.OCI_REGION }}
+
+      - name: Run Telegram setup
+        env:
+          OCI_VAULT_ID: ${{ vars.OCI_VAULT_ID }}
+        run: |
+          set -Eeuo pipefail
+
+          set -a
+          source deploy/k8s/base/config.env
+          set +a
+
+          get_secret() {
+            oci secrets secret-bundle get-secret-bundle-by-name \
+              --vault-id "${OCI_VAULT_ID}" \
+              --secret-name "$1" \
+              --stage CURRENT \
+              --query 'data."secret-bundle-content".content' \
+              --raw-output \
+              | base64 --decode
+          }
+
+          export YALOM_TELEGRAM__TOKEN="$(
+            get_secret yalom-bot-telegram-token
+          )"
+
+          export YALOM_TELEGRAM__WEBHOOK__SECRET_TOKEN="$(
+            get_secret yalom-bot-webhook-secret-token
+          )"
+
+          export YALOM_TELEGRAM__MINIAPP__SESSION_KEY=unused-by-telegram-admin
+
+          echo "::add-mask::${YALOM_TELEGRAM__TOKEN}"
+          echo "::add-mask::${YALOM_TELEGRAM__WEBHOOK__SECRET_TOKEN}"
+
+          cargo run \
+            --locked \
+            --bin telegram_admin \
+            --no-default-features

@@ -10,16 +10,20 @@ concurrency:
 permissions:
   contents: read
   packages: write
+  id-token: write
 
 env:
   REGISTRY: ghcr.io
   BACKEND_IMAGE_NAME: ${{ github.repository }}
   MINIAPP_IMAGE_NAME: ${{ github.repository_owner }}/yalom-bot-miniapp
 
+  RELEASE_BUCKET: yalom-bot-release
+  RELEASE_OBJECT: production/deploy.sh
+
 jobs:
   release:
     if: github.ref == 'refs/heads/main'
-
+    environment: production
     runs-on: ubuntu-latest
 
     steps:
@@ -35,7 +39,7 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build and push production image
+      - name: Build and push backend
         id: backend-build
         uses: docker/build-push-action@v7
         with:
@@ -46,8 +50,8 @@ jobs:
           tags: |
             ${{ env.REGISTRY }}/${{ env.BACKEND_IMAGE_NAME }}:${{ github.sha }}
             ${{ env.REGISTRY }}/${{ env.BACKEND_IMAGE_NAME }}:latest
-      
-      - name: Build and push miniapp image
+
+      - name: Build and push miniapp
         id: miniapp-build
         uses: docker/build-push-action@v7
         with:
@@ -65,8 +69,10 @@ jobs:
         with:
           version: v1.36.3
 
-      - name: Render production manifests
+      - name: Render release artifact
         run: |
+          set -Eeuo pipefail
+
           sed -i \
             "s/newTag: latest/newTag: ${GITHUB_SHA}/g" \
             deploy/k8s/overlays/oci-k3s/kustomization.yaml
@@ -74,81 +80,224 @@ jobs:
           kubectl kustomize deploy/k8s/overlays/oci-k3s \
             > /tmp/release.yaml
 
-          if grep -Fq "${REGISTRY}/${BACKEND_IMAGE_NAME}:latest" /tmp/release.yaml \
-            || grep -Fq "${REGISTRY}/${MINIAPP_IMAGE_NAME}:latest" /tmp/release.yaml; then
+          if grep -Fq ':latest' /tmp/release.yaml; then
             echo "Production manifest still contains :latest"
             exit 1
           fi
 
-      - name: Configure SSH
-        env:
-          OCI_SSH_HOST: ${{ vars.OCI_SSH_HOST }}
-          OCI_SSH_PORT: ${{ vars.OCI_SSH_PORT }}
-          OCI_SSH_USER: ${{ vars.OCI_SSH_USER }}
-          OCI_SSH_PRIVATE_KEY: ${{ secrets.OCI_SSH_PRIVATE_KEY }}
-          OCI_SSH_KNOWN_HOSTS: ${{ secrets.OCI_SSH_KNOWN_HOSTS }}
+          {
+            cat <<'SCRIPT'
+          #!/usr/bin/env bash
+          set -Eeuo pipefail
+
+          lock_file="/tmp/yalom-release.lock"
+          exec 9>"$lock_file"
+
+          if ! flock -n 9; then
+            echo "Another deployment is already running."
+            exit 1
+          fi
+
+          manifest="$(mktemp)"
+          trap 'rm -f "$manifest"' EXIT
+
+          cat > "$manifest" <<'__YALOM_RELEASE_MANIFEST__'
+          SCRIPT
+
+            cat /tmp/release.yaml
+
+            cat <<'SCRIPT'
+          __YALOM_RELEASE_MANIFEST__
+
+          echo "Removing previous Telegram setup job..."
+          sudo /usr/local/bin/k3s kubectl delete job telegram-setup \
+            --ignore-not-found=true \
+            --wait=true
+
+          echo "Applying Kubernetes manifests..."
+          sudo /usr/local/bin/k3s kubectl apply -f "$manifest"
+
+          echo "Waiting for backend rollout..."
+          sudo /usr/local/bin/k3s kubectl rollout status \
+            deployment/yalom-bot \
+            --timeout=180s
+
+          echo "Waiting for miniapp rollout..."
+          sudo /usr/local/bin/k3s kubectl rollout status \
+            deployment/yalom-bot-miniapp \
+            --timeout=180s
+
+          echo "Waiting for Telegram setup..."
+          if ! sudo /usr/local/bin/k3s kubectl wait \
+            --for=condition=complete \
+            job/telegram-setup \
+            --timeout=120s
+          then
+            echo "Telegram setup failed or timed out."
+            sudo /usr/local/bin/k3s kubectl logs \
+              job/telegram-setup || true
+            exit 1
+          fi
+
+          echo "Deployment completed."
+          SCRIPT
+          } > /tmp/deploy.sh
+
+      - name: Set up OCI
+        uses: ./.github/actions/oci-wif
+        with:
+          client-id: ${{ vars.OCI_WIF_CLIENT_ID }}
+          client-secret: ${{ secrets.OCI_WIF_CLIENT_SECRET }}
+          domain-url: ${{ vars.OCI_DOMAIN_URL }}
+          region: ${{ vars.OCI_REGION }}
+
+      - name: Find production k3s server
+        id: instance
         run: |
-          install -m 700 -d ~/.ssh
+          set -Eeuo pipefail
 
-          printf '%s\n' "${OCI_SSH_PRIVATE_KEY}" \
-            > ~/.ssh/oci_ed25519
-          chmod 600 ~/.ssh/oci_ed25519
+          result="$(
+            oci search resource structured-search \
+              --query-text \
+                "query instance resources where (definedTags.namespace = 'Yalom' && definedTags.key = 'DeploymentTarget' && definedTags.value = 'production-k3s-server' && lifecycleState = 'RUNNING')"
+          )"
 
-          printf '%s\n' "${OCI_SSH_KNOWN_HOSTS}" \
-            > ~/.ssh/known_hosts
-          chmod 600 ~/.ssh/known_hosts
+          mapfile -t instances < <(
+            jq -r '
+              .data.items[]
+              | [.identifier, ."compartment-id"]
+              | @tsv
+            ' <<< "$result"
+          )
 
-          : "${OCI_SSH_HOST:?OCI_SSH_HOST is not configured}"
-          : "${OCI_SSH_PORT:?OCI_SSH_PORT is not configured}"
-          : "${OCI_SSH_USER:?OCI_SSH_USER is not configured}"
-          : "${OCI_SSH_PRIVATE_KEY:?OCI_SSH_PRIVATE_KEY is not configured}"
-          : "${OCI_SSH_KNOWN_HOSTS:?OCI_SSH_KNOWN_HOSTS is not configured}"
+          if [[ "${#instances[@]}" -ne 1 ]]; then
+            echo "Expected exactly one running production k3s server, found ${#instances[@]}"
+            exit 1
+          fi
 
-          cat > ~/.ssh/config <<EOF
-          Host production
-              HostName ${OCI_SSH_HOST}
-              Port ${OCI_SSH_PORT}
-              User ${OCI_SSH_USER}
-              IdentityFile ~/.ssh/oci_ed25519
-              IdentitiesOnly yes
-              BatchMode yes
-              StrictHostKeyChecking yes
-          EOF
+          IFS=$'\t' read -r instance_id compartment_id \
+            <<< "${instances[0]}"
 
-          chmod 600 ~/.ssh/config
+          echo "instance-id=${instance_id}" >> "$GITHUB_OUTPUT"
+          echo "compartment-id=${compartment_id}" >> "$GITHUB_OUTPUT"
 
-          ssh production 'true'
+      - name: Upload release artifact
+        id: artifact
+        run: |
+          set -Eeuo pipefail
+
+          namespace="$(
+            oci os ns get \
+              --query data \
+              --raw-output
+          )"
+
+          oci os object put \
+            --namespace-name "$namespace" \
+            --bucket-name "$RELEASE_BUCKET" \
+            --name "$RELEASE_OBJECT" \
+            --file /tmp/deploy.sh \
+            --no-multipart \
+            --force
+
+          echo "namespace=${namespace}" >> "$GITHUB_OUTPUT"
 
       - name: Deploy to production
+        timeout-minutes: 10
+        env:
+          INSTANCE_ID: ${{ steps.instance.outputs.instance-id }}
+          COMPARTMENT_ID: ${{ steps.instance.outputs.compartment-id }}
+          OCI_NAMESPACE: ${{ steps.artifact.outputs.namespace }}
         run: |
-          # Job spec contains the image tag and is immutable,
-          # so remove a previous completed/failed Job first.
-          ssh production \
-            'sudo k3s kubectl delete job telegram-setup \
-              --ignore-not-found=true \
-              --wait=true'
+          set -Eeuo pipefail
 
-          cat /tmp/release.yaml \
-            | ssh production \
-                'sudo k3s kubectl apply -f -'
+          jq -n \
+            --arg namespace "$OCI_NAMESPACE" \
+            --arg bucket "$RELEASE_BUCKET" \
+            --arg object "$RELEASE_OBJECT" \
+            '{
+              source: {
+                sourceType: "OBJECT_STORAGE_TUPLE",
+                namespaceName: $namespace,
+                bucketName: $bucket,
+                objectName: $object
+              },
+              output: {
+                outputType: "TEXT"
+              }
+            }' > /tmp/command-content.json
 
-          ssh production \
-            'sudo k3s kubectl rollout status \
-              deployment/yalom-bot \
-              --timeout=180s'
+          jq -n \
+            --arg instance_id "$INSTANCE_ID" \
+            '{
+              instanceId: $instance_id
+            }' > /tmp/command-target.json
 
-          ssh production \
-            'sudo k3s kubectl rollout status \
-              deployment/yalom-bot-miniapp \
-              --timeout=180s'
+          command_id="$(
+            oci instance-agent command create \
+              --compartment-id "$COMPARTMENT_ID" \
+              --target file:///tmp/command-target.json \
+              --content file:///tmp/command-content.json \
+              --timeout-in-seconds 540 \
+              --display-name "yalom-release-${GITHUB_SHA}" \
+              --query data.id \
+              --raw-output
+          )"
 
-          ssh production \
-            'sudo k3s kubectl wait \
-              --for=condition=complete \
-              job/telegram-setup \
-              --timeout=120s'
+          echo "Run Command: ${command_id}"
 
-      - name: Keep last 3 images
+          deadline=$((SECONDS + 570))
+
+          while (( SECONDS < deadline )); do
+            execution="$(
+              oci instance-agent command-execution get \
+                --command-id "$command_id" \
+                --instance-id "$INSTANCE_ID"
+            )"
+
+            state="$(
+              jq -r '.data."lifecycle-state"' \
+                <<< "$execution"
+            )"
+
+            case "$state" in
+              ACCEPTED|IN_PROGRESS)
+                sleep 5
+                ;;
+
+              SUCCEEDED)
+                jq -r '.data.content.text // empty' \
+                  <<< "$execution"
+                exit 0
+                ;;
+
+              FAILED|TIMED_OUT|CANCELED)
+                jq -r '.data.content.text // empty' \
+                  <<< "$execution"
+
+                jq -r '.data.content.message // empty' \
+                  <<< "$execution"
+
+                echo "Deployment failed: ${state}"
+                exit 1
+                ;;
+
+              *)
+                echo "Unexpected Run Command state: ${state}"
+                exit 1
+                ;;
+            esac
+          done
+
+          echo "Timed out waiting for Run Command"
+
+          oci instance-agent command cancel \
+            --command-id "$command_id" \
+            --force || true
+
+          exit 1
+
+      - name: Keep last 3 backend images
         uses: actions/delete-package-versions@v5
         with:
           package-name: yalom-bot

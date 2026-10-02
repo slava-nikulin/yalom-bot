@@ -1,0 +1,95 @@
+name: Set up OCI WIF
+description: Authenticate GitHub Actions to OCI using workload identity federation
+
+inputs:
+  client-id:
+    required: true
+  client-secret:
+    required: true
+  domain-url:
+    required: true
+  region:
+    required: true
+
+runs:
+  using: composite
+
+  steps:
+    - name: Install OCI CLI
+      shell: bash
+      run: |
+        python -m pip install --user 'oci-cli>=3.94,<4'
+        echo "$(python -m site --user-base)/bin" >> "$GITHUB_PATH"
+
+    - name: Configure OCI WIF
+      shell: bash
+      env:
+        OCI_WIF_CLIENT_ID: ${{ inputs.client-id }}
+        OCI_WIF_CLIENT_SECRET: ${{ inputs.client-secret }}
+        OCI_DOMAIN_URL: ${{ inputs.domain-url }}
+        OCI_REGION: ${{ inputs.region }}
+      run: |
+        set -Eeuo pipefail
+
+        dir="${RUNNER_TEMP}/oci-wif"
+        mkdir -p "$dir"
+        chmod 700 "$dir"
+
+        private_key="$dir/private.pem"
+        public_key="$dir/public.pem"
+        rpst_file="$dir/rpst"
+
+        github_jwt="$(
+          curl --fail-with-body --silent --show-error --get \
+            --header "Authorization: Bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" \
+            --data-urlencode "audience=oci-wif" \
+            "${ACTIONS_ID_TOKEN_REQUEST_URL}" \
+            | jq -er '.value'
+        )"
+
+        openssl genpkey \
+          -algorithm RSA \
+          -pkeyopt rsa_keygen_bits:2048 \
+          -out "$private_key" \
+          2>/dev/null
+
+        chmod 600 "$private_key"
+
+        openssl pkey \
+          -in "$private_key" \
+          -pubout \
+          -out "$public_key"
+
+        compact_public_key="$(
+          sed '/-----/d' "$public_key" | tr -d '\r\n'
+        )"
+
+        rpst="$(
+          curl --fail-with-body --silent --show-error \
+            --user "${OCI_WIF_CLIENT_ID}:${OCI_WIF_CLIENT_SECRET}" \
+            --header "Content-Type: application/x-www-form-urlencoded" \
+            --data-urlencode "grant_type=urn:ietf:params:oauth:grant-type:token-exchange" \
+            --data-urlencode "requested_token_type=urn:oci:token-type:oci-rpst" \
+            --data-urlencode "subject_token_type=jwt" \
+            --data-urlencode "subject_token=${github_jwt}" \
+            --data-urlencode "public_key=${compact_public_key}" \
+            --data-urlencode "res_type=githubactions" \
+            "${OCI_DOMAIN_URL%/}/oauth2/v1/token" \
+            | jq -er '.token'
+        )"
+
+        printf '%s' "$rpst" > "$rpst_file"
+        chmod 600 "$rpst_file"
+
+        rm "$public_key"
+
+        {
+          echo "OCI_CLI_AUTH=resource_principal"
+          echo "OCI_CLI_REGION=${OCI_REGION}"
+          echo "OCI_RESOURCE_PRINCIPAL_VERSION=2.2"
+          echo "OCI_RESOURCE_PRINCIPAL_REGION=${OCI_REGION}"
+          echo "OCI_RESOURCE_PRINCIPAL_RPST=${rpst_file}"
+          echo "OCI_RESOURCE_PRINCIPAL_PRIVATE_PEM=${private_key}"
+        } >> "$GITHUB_ENV"
+
+        echo "OCI workload identity configured"
