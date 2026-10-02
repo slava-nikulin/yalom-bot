@@ -159,7 +159,7 @@ jobs:
           result="$(
             oci search resource structured-search \
               --query-text \
-                "query instance resources where (definedTags.namespace = 'Yalom' && definedTags.key = 'DeploymentTarget' && definedTags.value = 'production-k3s-server' && lifecycleState = 'RUNNING')"
+                "query instance resources where (definedTags.namespace = 'Yalom' && definedTags.key = 'DeploymentTarget' && definedTags.value = 'production-k3s-server' && lifeCycleState = 'RUNNING')"
           )"
 
           mapfile -t instances < <(
