@@ -32,7 +32,7 @@ RUN --mount=type=bind,source=.,target=/src,readonly \
     && cp "/build/${target}/release/telegram_admin" /telegram_admin \
     && cp "/build/${target}/release/migrate" /migrate \
     && xx-verify --static /yalom-bot \
-    && xx-verify --static /telegram_admin
+    && xx-verify --static /telegram_admin \
     && xx-verify --static /migrate
 
 FROM scratch AS final

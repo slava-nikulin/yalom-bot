@@ -203,4 +203,4 @@ docker-check-all: docker-check docker-check-miniapp
 check: fmt clippy test k8s-check frontend-lint frontend-typecheck
 
 # Everything expected to succeed before merge/release.
-check-full: frontend-install check test production-build frontend-build docker-check-all
+check-full: frontend-install check test frontend-build docker-check-all
