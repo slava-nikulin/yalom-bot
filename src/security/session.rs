@@ -28,11 +28,11 @@ pub struct SessionIdentity {
 }
 
 #[derive(Clone)]
-pub struct SessionTokens {
+pub struct Sessions {
     key: SymmetricKey<V4>,
 }
 
-impl SessionTokens {
+impl Sessions {
     pub fn new(session_key: &str) -> Self {
         let hk = Hkdf::<Sha256>::new(None, session_key.as_bytes());
         let mut okm = [0u8; 32];
@@ -44,12 +44,12 @@ impl SessionTokens {
         }
     }
 
-    pub fn issue(&self, user_id: i64) -> Result<String, SessionError> {
+    pub fn issue(&self, tg_user_id: i64) -> Result<String, SessionError> {
         let mut claims =
             Claims::new_expires_in(&time::Duration::from_secs(SESSION_TTL_SECONDS as u64))?;
 
         claims
-            .subject(&user_id.to_string())
+            .subject(&tg_user_id.to_string())
             .expect("i64 string representation is never empty");
 
         let token = local::encrypt(&self.key, &claims, None, None)?;
@@ -83,7 +83,7 @@ mod tests {
 
     #[test]
     fn correct_validate() {
-        let session_tokens = SessionTokens::new(SESSION_KEY);
+        let session_tokens = Sessions::new(SESSION_KEY);
 
         let issued_token = session_tokens.issue(123).unwrap();
         let ident = session_tokens.validate(&issued_token).unwrap();
@@ -93,7 +93,7 @@ mod tests {
 
     #[test]
     fn incorrect_token_rejected_on_validate() {
-        let session_tokens = SessionTokens::new(SESSION_KEY);
+        let session_tokens = Sessions::new(SESSION_KEY);
 
         let res = session_tokens.validate("wrong token");
 
@@ -102,10 +102,10 @@ mod tests {
 
     #[test]
     fn token_from_wrong_key_rejected_on_validate() {
-        let session_tokens_a = SessionTokens::new("a key");
+        let session_tokens_a = Sessions::new("a key");
         let issued_token_a = session_tokens_a.issue(123).unwrap();
 
-        let session_tokens_b = SessionTokens::new("b key");
+        let session_tokens_b = Sessions::new("b key");
 
         let res = session_tokens_b.validate(&issued_token_a);
 

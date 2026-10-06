@@ -25,7 +25,6 @@ RUN --mount=type=bind,source=.,target=/src,readonly \
     xx-cargo build \
         --locked \
         --release \
-        --no-default-features \
         --bins \
         --target-dir /build \
     && target="$(xx-cargo --print-target-triple)" \

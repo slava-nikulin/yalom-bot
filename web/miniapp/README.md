@@ -28,7 +28,7 @@ Fill in `.env` with a Telegram bot token, webhook secret token, webhook URL, and
 set -a
 source .env
 set +a
-cargo run --no-default-features --bin yalom-bot
+cargo run --bin yalom-bot
 ```
 
 Open `http://localhost:3000/miniapp` to check that the SPA and its assets are served. The app can complete session bootstrap only when Telegram opens it and supplies `Telegram.WebApp.initData`. For that flow, expose port 3000 through HTTPS (for example, `just tunnel`) and open the tunnel's `/miniapp` URL from Telegram. The frontend posts to `/miniapp/session` on the same origin.

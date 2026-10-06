@@ -24,7 +24,7 @@ pub struct TelegramConfig {
 #[derive(Debug, Deserialize)]
 pub struct WebhookConfig {
     pub url: url::Url,
-    pub secret_token: Option<String>,
+    pub secret_token: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -35,14 +35,6 @@ pub struct HttpConfig {
 
 impl Config {
     pub fn load() -> anyhow::Result<Self> {
-        #[cfg(feature = "local-env")]
-        if let Err(err) = dotenvy::dotenv() {
-            tracing::error!(
-                error = %err,
-                "failed to load local .env file"
-            );
-        }
-
         Ok(config::Config::builder()
             .set_default("http.host", "0.0.0.0")?
             .set_default("http.port", 3000)?

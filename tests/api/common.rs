@@ -5,10 +5,15 @@ use std::sync::{Arc, Mutex};
 
 use axum::Router;
 use yalom_bot::{
-    app_state::{AppState, session_state::MiniAppState},
+    app_state::AppState,
     http::app_router,
-    security::session::SessionTokens,
-    telegram::TelegramClient,
+    security::session::Sessions,
+    telegram::{
+        TelegramClient,
+        update_service::{TgUpdateJob, TgUpdateService},
+    },
+    user::store::MySqlUserStore,
+    worker_pool::WorkerPool,
 };
 
 pub const TG_WEBHOOK_SECRET_TOKEN: &str = "tg_webhook_secret_token";
@@ -45,24 +50,33 @@ impl TelegramClient for TestBotClient {
 pub struct TestApp {
     pub router: Router,
     pub tg_calls: Arc<Mutex<Vec<TgCall>>>,
+    pub tg_update_job_wp: WorkerPool<TgUpdateJob>,
 }
 
 impl TestApp {
-    pub fn new() -> Self {
+    pub async fn new(db: sqlx::MySqlPool) -> anyhow::Result<Self> {
+        let user_store = MySqlUserStore::new(db.clone());
         let tg_bot_client = TestBotClient::new();
         let tg_calls = tg_bot_client.calls.clone();
 
-        let app_state = AppState::new(tg_bot_client);
+        let (tg_update_service, tg_update_job_wp) =
+            TgUpdateService::new(tg_bot_client.clone(), user_store.clone(), 1, 10);
 
-        let miniapp_state = MiniAppState::new(SessionTokens::new(SESSION_KEY));
-
-        let router = app_router(
+        let app_state = AppState::new(
             TG_TOKEN,
-            TG_WEBHOOK_SECRET_TOKEN.into(),
-            app_state,
-            miniapp_state,
+            TG_WEBHOOK_SECRET_TOKEN,
+            Sessions::new(SESSION_KEY),
+            tg_bot_client,
+            user_store,
+            tg_update_service,
         );
 
-        Self { router, tg_calls }
+        let router = app_router(app_state);
+
+        Ok(Self {
+            router,
+            tg_calls,
+            tg_update_job_wp,
+        })
     }
 }

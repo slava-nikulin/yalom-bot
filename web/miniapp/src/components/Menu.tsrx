@@ -1,9 +1,24 @@
-import { useQuery } from '@tanstack/solid-query';
+import {
+  useMutation,
+  useQuery,
+  useQueryClient,
+} from '@tanstack/solid-query';
 
+import { updateMenuState } from '../api/menu';
 import { menuQueryOptions } from '../queries/menu';
 
+
 export default function Menu() @{
+  const queryClient = useQueryClient();
   const menu = useQuery(() => menuQueryOptions);
+
+  const updateMenu = useMutation(() => ({
+  mutationFn: updateMenuState,
+
+  onSuccess: (state) => {
+    queryClient.setQueryData(menuQueryOptions.queryKey, state);
+  },
+}));
 
   <main class="
     min-h-dvh
@@ -61,13 +76,15 @@ export default function Menu() @{
           <div class="grid gap-3">
             <button
               type="button"
-              disabled={menu.data.paused}
+              disabled={menu.data.paused || updateMenu.isPending}
+              onClick={() => updateMenu.mutate(true)}
               class="
                 h-12 w-full rounded-xl
                 bg-[var(--app-button)]
                 px-4 text-sm font-semibold
                 text-[var(--app-button-text)]
                 transition-opacity
+                cursor-pointer
                 hover:opacity-90
                 disabled:cursor-not-allowed
                 disabled:opacity-40
@@ -78,7 +95,8 @@ export default function Menu() @{
 
             <button
               type="button"
-              disabled={!menu.data.paused}
+              disabled={!menu.data.paused || updateMenu.isPending}
+              onClick={() => updateMenu.mutate(false)}
               class="
                 h-12 w-full rounded-xl
                 border border-[var(--app-border)]
@@ -86,6 +104,7 @@ export default function Menu() @{
                 px-4 text-sm font-semibold
                 text-[var(--app-text)]
                 transition-opacity
+                cursor-pointer
                 hover:opacity-80
                 disabled:cursor-not-allowed
                 disabled:opacity-40
@@ -94,6 +113,11 @@ export default function Menu() @{
               Resume
             </button>
           </div>
+          @if (updateMenu.isError) {
+            <p class="text-sm font-medium text-[var(--app-destructive)]">
+              Failed to update agent status.
+            </p>
+          }
         </>
       }
     </section>

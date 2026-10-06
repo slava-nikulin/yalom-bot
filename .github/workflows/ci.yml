@@ -24,6 +24,25 @@ jobs:
 
   test:
     runs-on: ubuntu-latest
+
+    services:
+      mysql:
+        image: mysql:8.4
+        env:
+          MYSQL_ROOT_PASSWORD: root
+          MYSQL_DATABASE: yalom_test
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -uroot -proot --silent"
+          --health-interval=2s
+          --health-timeout=2s
+          --health-retries=30
+          --health-start-period=10s
+
+    env:
+      DATABASE_URL: mysql://root:root@127.0.0.1:3306/yalom_test
+
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
@@ -31,10 +50,15 @@ jobs:
 
   production-build:
     runs-on: ubuntu-latest
+
     steps:
       - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
-      - run: cargo build --release --no-default-features --locked
+      - uses: docker/setup-buildx-action@v4
+      - uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: Dockerfile
+          push: false
 
   frontend:
     runs-on: ubuntu-latest
