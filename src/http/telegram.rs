@@ -57,6 +57,7 @@ async fn tg_webhook(
         }
     };
 
+    // TODO: durable inbox
     if let Err(err) = state.enqueue(tg_job).await {
         tracing::error!(
             error = %err,

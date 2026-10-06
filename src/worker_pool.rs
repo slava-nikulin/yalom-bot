@@ -21,6 +21,7 @@ where
     {
         assert!(count > 0, "worker pool must have at least one worker");
 
+        // TODO: bounded channel
         let (sender, receiver) = unbounded();
 
         let fa = Arc::new(f);
