@@ -190,25 +190,65 @@ jobs:
             apply \
             -f "$external_secret_manifest"
 
-          echo "Waiting for DATABASE_URL to be synchronized..."
+          previous_refresh_time="$(
+            sudo /usr/local/bin/k3s kubectl \
+              get externalsecret yalom-bot \
+              -o jsonpath='{.status.refreshTime}' \
+              2>/dev/null \
+              || true
+          )"
 
-          encoded_database_url=""
+          echo "Forcing ExternalSecret refresh..."
+
+          sudo /usr/local/bin/k3s kubectl \
+            annotate externalsecret yalom-bot \
+            force-sync="$(date +%s)" \
+            --overwrite
+
+          echo "Waiting for ExternalSecret refresh..."
+
+          external_secret_refreshed=0
 
           for _ in $(seq 1 60); do
-            encoded_database_url="$(
+            current_refresh_time="$(
               sudo /usr/local/bin/k3s kubectl \
-                get secret yalom-bot-secrets \
-                -o jsonpath='{.data.DATABASE_URL}' \
+                get externalsecret yalom-bot \
+                -o jsonpath='{.status.refreshTime}' \
                 2>/dev/null \
                 || true
             )"
 
-            if [[ -n "$encoded_database_url" ]]; then
+            if [[ -n "$current_refresh_time" ]] \
+                && [[ "$current_refresh_time" != "$previous_refresh_time" ]]; then
+              external_secret_refreshed=1
               break
             fi
 
             sleep 2
           done
+
+          if [[ "$external_secret_refreshed" -ne 1 ]]; then
+            echo "ExternalSecret did not refresh in time."
+
+            sudo /usr/local/bin/k3s kubectl \
+              describe externalsecret yalom-bot \
+              || true
+
+            exit 1
+          fi
+
+          encoded_database_url="$(
+            sudo /usr/local/bin/k3s kubectl \
+              get secret yalom-bot-secrets \
+              -o jsonpath='{.data.DATABASE_URL}' \
+              2>/dev/null \
+              || true
+          )"
+
+          if [[ -z "$encoded_database_url" ]]; then
+            echo "DATABASE_URL is missing from yalom-bot-secrets."
+            exit 1
+          fi
 
           if [[ -z "$encoded_database_url" ]]; then
             echo "DATABASE_URL was not synchronized into yalom-bot-secrets."
