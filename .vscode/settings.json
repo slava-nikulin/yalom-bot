@@ -1,3 +1,7 @@
 {
-  "js/ts.tsdk.path": "web/miniapp/node_modules/typescript/lib"
+  "js/ts.tsdk.path": "web/miniapp/node_modules/typescript/lib",
+  "rust-analyzer.runnables.extraEnv": {
+    "DATABASE_URL": "mysql://root:root@127.0.0.1:3307/yalom_test",
+    "RUST_BACKTRACE": "1"
+  }
 }

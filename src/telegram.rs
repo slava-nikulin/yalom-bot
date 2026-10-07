@@ -1,3 +1,5 @@
+pub mod update_service;
+
 use rustigram_api::BotClient;
 
 pub trait TelegramClient: Clone + Send + Sync + 'static {

@@ -25,14 +25,15 @@ RUN --mount=type=bind,source=.,target=/src,readonly \
     xx-cargo build \
         --locked \
         --release \
-        --no-default-features \
         --bins \
         --target-dir /build \
     && target="$(xx-cargo --print-target-triple)" \
     && cp "/build/${target}/release/yalom-bot" /yalom-bot \
     && cp "/build/${target}/release/telegram_admin" /telegram_admin \
+    && cp "/build/${target}/release/migrate" /migrate \
     && xx-verify --static /yalom-bot \
-    && xx-verify --static /telegram_admin
+    && xx-verify --static /telegram_admin \
+    && xx-verify --static /migrate
 
 FROM scratch AS final
 
@@ -48,6 +49,7 @@ COPY --from=build \
 COPY --from=build --chmod=0555 \
     /yalom-bot \
     /telegram_admin \
+    /migrate \
     /usr/local/bin/
 
 USER 10001:10001

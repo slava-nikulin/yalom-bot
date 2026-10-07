@@ -1,26 +1,30 @@
+pub mod dto;
+pub mod extractors;
+
 use axum::{
-    Extension, Router,
-    extract::{Request, State},
+    Json, Router,
+    extract::{FromRef, FromRequestParts, State},
     http::StatusCode,
-    middleware::{self, Next},
     response::{IntoResponse, Response},
     routing::{get, post},
 };
-use rustigram_miniapp::{HmacValidateOpts, WebAppInitData, validate_hmac};
 use tower_cookies::{
     Cookie, Cookies,
     cookie::{SameSite, time::Duration},
 };
 
 use crate::{
-    app_state::session_state::MiniAppState,
+    app_state::{SessionState, UserStoreState},
+    http::miniapp::{
+        dto::{MenuState, UpdateMenuRequest},
+        extractors::{SESSION_COOKIE_NAME, ValidatedInitData},
+    },
     security::session::{SESSION_TTL_SECONDS, SessionError, SessionIdentity},
+    user::store::{UserStore, UserStoreError},
 };
 
-pub const SESSION_COOKIE_NAME: &str = "__Host-yalom-session";
-
 #[derive(Debug, thiserror::Error)]
-enum MiniAppErr {
+pub enum MiniAppErr {
     #[error("failed to issue session token")]
     SessionIssue(#[source] SessionError),
 
@@ -51,45 +55,35 @@ impl IntoResponse for MiniAppErr {
     }
 }
 
-pub fn router(tg_bot_token: &str, miniapp_state: MiniAppState) -> Router {
+pub fn router<S, Us>() -> Router<S>
+where
+    S: Clone + Send + Sync + 'static,
+    Us: UserStore,
+    UserStoreState<Us>: FromRef<S>,
+    SessionState: FromRef<S>,
+    ValidatedInitData: FromRequestParts<S>,
+{
     let api_router = Router::new()
-        .route(
-            "/session",
-            post(issue_session)
-                .route_layer(middleware::from_fn_with_state(
-                    tg_bot_token.to_owned(),
-                    validate_init_data,
-                ))
-                // .route_layer(BotTokenLayer(BotToken(tg_bot_token.to_owned())))
-                .with_state(miniapp_state.clone()),
-        )
-        .route(
-            "/menu",
-            get(get_menu).route_layer(middleware::from_fn_with_state(
-                miniapp_state.clone(),
-                validate_session_token,
-            )),
-        );
+        .route("/session", post(issue_session))
+        .route("/menu", get(get_menu).patch(update_bot_settings));
     Router::new().nest("/api/miniapp", api_router)
 }
 
 async fn issue_session(
-    State(state): State<MiniAppState>,
-    Extension(init_data): Extension<WebAppInitData>,
+    State(SessionState(state)): State<SessionState>,
+    ValidatedInitData(init_data): ValidatedInitData,
     cookies: Cookies,
 ) -> Result<StatusCode, MiniAppErr> {
-    let Some(user) = init_data.user else {
+    let Some(tg_user) = init_data.user else {
         return Err(MiniAppErr::MissingUser);
     };
-    let token = state
-        .session_tokens
-        .issue(user.id)
-        .map_err(MiniAppErr::SessionIssue)?;
+    let token = state.issue(tg_user.id).map_err(MiniAppErr::SessionIssue)?;
 
     let cookie = Cookie::build((SESSION_COOKIE_NAME, token))
         .http_only(true)
         .secure(true)
-        .same_site(SameSite::Lax)
+        .same_site(SameSite::None)
+        .partitioned(true)
         .path("/")
         .max_age(Duration::seconds(SESSION_TTL_SECONDS))
         .build();
@@ -99,53 +93,48 @@ async fn issue_session(
     Ok(StatusCode::NO_CONTENT)
 }
 
-async fn validate_session_token(
-    State(state): State<MiniAppState>,
-    cookies: Cookies,
-    mut request: Request,
-    next: Next,
-) -> Result<Response, MiniAppErr> {
-    let auth_token = cookies
-        .get(SESSION_COOKIE_NAME)
-        .ok_or(MiniAppErr::MissingSession)?;
+async fn get_menu<Us: UserStore>(
+    identity: SessionIdentity,
+    State(UserStoreState(state)): State<UserStoreState<Us>>,
+) -> Result<Json<MenuState>, StatusCode> {
+    let user = state
+        .get(identity.tg_user_id)
+        .await
+        .map_err(|err| match err {
+            UserStoreError::Database(_) => {
+                tracing::error!(error = %err, "failed to load user");
+                StatusCode::INTERNAL_SERVER_ERROR
+            }
+            UserStoreError::NotFound => StatusCode::NOT_FOUND,
+        })?;
 
-    let identity = state
-        .session_tokens
-        .validate(auth_token.value())
-        .map_err(MiniAppErr::InvalidSession)?;
-
-    request.extensions_mut().insert(identity);
-
-    Ok(next.run(request).await)
+    Ok(Json(MenuState {
+        paused: !user.is_active,
+    }))
 }
 
-// TODO: Replace with Rustigram middleware once https://github.com/meh7an/rustigram/issues/28 is resolved.
-async fn validate_init_data(
-    State(bot_token): State<String>,
-    mut request: Request,
-    next: Next,
-) -> Result<Response, MiniAppErr> {
-    let raw_init_data = request
-        .headers()
-        .get("X-Tma-Init-Data")
-        .ok_or(MiniAppErr::InvalidInitData)?
-        .to_str()
-        .map_err(|_| MiniAppErr::InvalidInitData)?;
+async fn update_bot_settings<Us: UserStore>(
+    identity: SessionIdentity,
+    State(UserStoreState(store)): State<UserStoreState<Us>>,
+    Json(request): Json<UpdateMenuRequest>,
+) -> Result<Json<MenuState>, StatusCode> {
+    store
+        .update_bot_settings(identity.tg_user_id, !request.paused)
+        .await
+        .map_err(|err| match err {
+            UserStoreError::Database(_) => {
+                tracing::error!(
+                    error = %err,
+                    tg_user_id = identity.tg_user_id,
+                    "failed to update bot settings"
+                );
 
-    let data = validate_hmac(
-        raw_init_data,
-        &bot_token,
-        HmacValidateOpts {
-            max_age_secs: Some(SESSION_TTL_SECONDS as u64),
-        },
-    )
-    .map_err(|_| MiniAppErr::InvalidInitData)?;
+                StatusCode::INTERNAL_SERVER_ERROR
+            }
+            UserStoreError::NotFound => StatusCode::NOT_FOUND,
+        })?;
 
-    request.extensions_mut().insert(data);
-
-    Ok(next.run(request).await)
-}
-
-async fn get_menu(Extension(_identity): Extension<SessionIdentity>) -> Result<(), StatusCode> {
-    todo!();
+    Ok(Json(MenuState {
+        paused: request.paused,
+    }))
 }

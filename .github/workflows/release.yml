@@ -64,6 +64,48 @@ jobs:
             ${{ env.REGISTRY }}/${{ env.MINIAPP_IMAGE_NAME }}:${{ github.sha }}
             ${{ env.REGISTRY }}/${{ env.MINIAPP_IMAGE_NAME }}:latest
 
+      - name: Extract migration binary
+        run: |
+          set -Eeuo pipefail
+
+          image="${REGISTRY}/${BACKEND_IMAGE_NAME}:${GITHUB_SHA}"
+          container_id=""
+
+          cleanup_container() {
+            if [[ -n "${container_id}" ]]; then
+              docker rm -f "${container_id}" >/dev/null 2>&1 || true
+            fi
+          }
+
+          trap cleanup_container EXIT
+
+          docker pull \
+            --platform linux/arm64 \
+            "${image}"
+
+          container_id="$(
+            docker create \
+              --platform linux/arm64 \
+              "${image}"
+          )"
+
+          docker cp \
+            "${container_id}:/usr/local/bin/migrate" \
+            /tmp/yalom-migrate
+
+          test -s /tmp/yalom-migrate
+
+          docker rm "${container_id}" >/dev/null
+          container_id=""
+
+          trap - EXIT
+
+          chmod 0700 /tmp/yalom-migrate
+
+          base64 \
+            /tmp/yalom-migrate \
+            > /tmp/yalom-migrate.b64
+
       - name: Set up kubectl
         uses: azure/setup-kubectl@v5
         with:
@@ -72,6 +114,10 @@ jobs:
       - name: Render release artifact
         run: |
           set -Eeuo pipefail
+
+          external_secret_source="deploy/k8s/overlays/oci-k3s/external-secret.yaml"
+
+          test -s "${external_secret_source}"
 
           sed -i \
             "s/newTag: latest/newTag: ${GITHUB_SHA}/g" \
@@ -88,6 +134,7 @@ jobs:
           {
             cat <<'SCRIPT'
           #!/usr/bin/env bash
+
           set -Eeuo pipefail
 
           lock_file="/tmp/yalom-release.lock"
@@ -99,7 +146,17 @@ jobs:
           fi
 
           manifest="$(mktemp)"
-          trap 'rm -f "$manifest"' EXIT
+          external_secret_manifest="$(mktemp)"
+          migrate_bin="$(mktemp /tmp/yalom-migrate.XXXXXX)"
+
+          cleanup() {
+            rm -f \
+              "$manifest" \
+              "$external_secret_manifest" \
+              "$migrate_bin"
+          }
+
+          trap cleanup EXIT
 
           cat > "$manifest" <<'__YALOM_RELEASE_MANIFEST__'
           SCRIPT
@@ -109,39 +166,110 @@ jobs:
             cat <<'SCRIPT'
           __YALOM_RELEASE_MANIFEST__
 
-          echo "Removing previous Telegram setup job..."
-          sudo /usr/local/bin/k3s kubectl delete job telegram-setup \
-            --ignore-not-found=true \
-            --wait=true
+          cat > "$external_secret_manifest" <<'__YALOM_EXTERNAL_SECRET__'
+          SCRIPT
+
+            cat "${external_secret_source}"
+
+            cat <<'SCRIPT'
+          __YALOM_EXTERNAL_SECRET__
+
+          base64 --decode > "$migrate_bin" <<'__YALOM_MIGRATE_BINARY__'
+          SCRIPT
+
+            cat /tmp/yalom-migrate.b64
+
+            cat <<'SCRIPT'
+          __YALOM_MIGRATE_BINARY__
+
+          chmod 0700 "$migrate_bin"
+
+          echo "Applying production ExternalSecret..."
+
+          sudo /usr/local/bin/k3s kubectl \
+            apply \
+            -f "$external_secret_manifest"
+
+          echo "Waiting for DATABASE_URL to be synchronized..."
+
+          encoded_database_url=""
+
+          for _ in $(seq 1 60); do
+            encoded_database_url="$(
+              sudo /usr/local/bin/k3s kubectl \
+                get secret yalom-bot-secrets \
+                -o jsonpath='{.data.DATABASE_URL}' \
+                2>/dev/null \
+                || true
+            )"
+
+            if [[ -n "$encoded_database_url" ]]; then
+              break
+            fi
+
+            sleep 2
+          done
+
+          if [[ -z "$encoded_database_url" ]]; then
+            echo "DATABASE_URL was not synchronized into yalom-bot-secrets."
+
+            sudo /usr/local/bin/k3s kubectl \
+              describe externalsecret yalom-bot \
+              || true
+
+            exit 1
+          fi
+
+          database_url="$(
+            printf '%s' "$encoded_database_url" \
+              | base64 --decode
+          )"
+
+          unset encoded_database_url
+
+          if [[ -z "$database_url" ]]; then
+            echo "DATABASE_URL is empty."
+            exit 1
+          fi
+
+          echo "Running database migrations..."
+
+          DATABASE_URL="$database_url" \
+            "$migrate_bin"
+
+          unset database_url
+
+          echo "Database migrations completed."
 
           echo "Applying Kubernetes manifests..."
-          sudo /usr/local/bin/k3s kubectl apply -f "$manifest"
+
+          sudo /usr/local/bin/k3s kubectl \
+            apply \
+            -f "$manifest"
 
           echo "Waiting for backend rollout..."
-          sudo /usr/local/bin/k3s kubectl rollout status \
+
+          sudo /usr/local/bin/k3s kubectl \
+            rollout status \
             deployment/yalom-bot \
             --timeout=180s
 
           echo "Waiting for miniapp rollout..."
-          sudo /usr/local/bin/k3s kubectl rollout status \
+
+          sudo /usr/local/bin/k3s kubectl \
+            rollout status \
             deployment/yalom-bot-miniapp \
             --timeout=180s
-
-          echo "Waiting for Telegram setup..."
-          if ! sudo /usr/local/bin/k3s kubectl wait \
-            --for=condition=complete \
-            job/telegram-setup \
-            --timeout=120s
-          then
-            echo "Telegram setup failed or timed out."
-            sudo /usr/local/bin/k3s kubectl logs \
-              job/telegram-setup || true
-            exit 1
-          fi
 
           echo "Deployment completed."
           SCRIPT
           } > /tmp/deploy.sh
+
+          chmod 0700 /tmp/deploy.sh
+
+          rm -f \
+            /tmp/yalom-migrate \
+            /tmp/yalom-migrate.b64
 
       - name: Set up OCI
         uses: ./.github/actions/oci-wif
@@ -256,9 +384,10 @@ jobs:
                 --all \
                 | jq -c \
                     --arg command_id "$command_id" \
-                    '.data[]
-                    | select(."instance-agent-command-id" == $command_id)' \
-                | head -n1
+                    'first(
+                      .data[]
+                      | select(."instance-agent-command-id" == $command_id)
+                    ) // empty'
             )"
 
             if [[ -z "$execution" ]]; then
@@ -267,8 +396,17 @@ jobs:
               continue
             fi
 
-            state="$(jq -r '."lifecycle-state"' <<< "$execution")"
-            delivery="$(jq -r '."delivery-state"' <<< "$execution")"
+            state="$(
+              jq -r \
+                '."lifecycle-state"' \
+                <<< "$execution"
+            )"
+
+            delivery="$(
+              jq -r \
+                '."delivery-state"' \
+                <<< "$execution"
+            )"
 
             echo "Run Command: delivery=${delivery}, state=${state}"
 
@@ -285,13 +423,21 @@ jobs:
                 ;;
 
               SUCCEEDED)
-                jq -r '.content.text // empty' <<< "$execution"
+                jq -r \
+                  '.content.text // empty' \
+                  <<< "$execution"
+
                 exit 0
                 ;;
 
               FAILED|TIMED_OUT|CANCELED)
-                jq -r '.content.text // empty' <<< "$execution"
-                jq -r '.content.message // empty' <<< "$execution"
+                jq -r \
+                  '.content.text // empty' \
+                  <<< "$execution"
+
+                jq -r \
+                  '.content.message // empty' \
+                  <<< "$execution"
 
                 echo "Deployment failed: ${state}"
                 exit 1
@@ -303,14 +449,6 @@ jobs:
                 ;;
             esac
           done
-
-          echo "Timed out waiting for Run Command"
-
-          oci instance-agent command cancel \
-            --command-id "$command_id" \
-            --force || true
-
-          exit 1
 
           echo "Timed out waiting for Run Command"
 
@@ -341,19 +479,24 @@ jobs:
           {
             echo "### Production release"
             echo
+
             echo "Backend:"
             echo "\`${{ env.REGISTRY }}/${{ env.BACKEND_IMAGE_NAME }}:${{ github.sha }}\`"
             echo
+
             echo "Backend digest:"
             echo "\`${{ steps.backend-build.outputs.digest }}\`"
             echo
+
             echo "Miniapp:"
             echo "\`${{ env.REGISTRY }}/${{ env.MINIAPP_IMAGE_NAME }}:${{ github.sha }}\`"
             echo
+
             echo "Miniapp digest:"
             echo "\`${{ steps.miniapp-build.outputs.digest }}\`"
             echo
-            echo "Deployment: ✅"
+
+            echo "Database migrations: ✅"
             echo
-            echo "Telegram setup: ✅"
+            echo "Deployment: ✅"
           } >> "$GITHUB_STEP_SUMMARY"

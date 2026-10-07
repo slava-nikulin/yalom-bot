@@ -61,5 +61,4 @@ jobs:
 
           cargo run \
             --locked \
-            --bin telegram_admin \
-            --no-default-features
+            --bin telegram_admin

@@ -7,7 +7,6 @@ resources:
   - miniapp-deployment.yaml
   - miniapp-service.yaml
   - http-route.yaml
-  - telegram-admin-job.yaml
 
 configMapGenerator:
   - name: yalom-bot-config
