@@ -9,6 +9,7 @@ EFFORT="low"
 TIMEZONE="Europe/Moscow"
 TIME_OVERRIDE=""
 NO_TIME=false
+INTENT="free"
 COUNT=1
 CONTEXT=""
 RAW=false
@@ -25,7 +26,8 @@ Options:
   -z, --tz TIMEZONE     IANA timezone
       --time HH:MM      Override local time of day (e.g. 08:00)
       --no-time         Omit date and timezone context (on_demand only)
-  -n, --count N         Number of independent generations
+      --intent INTENT   free | observation | question | invitation | greeting
+  -n, --count N         Number of generations (later ones see earlier outputs)
       --context TEXT    Additional user context
       --raw             Print complete API response
       --dry-run         Print request JSON without calling API
@@ -41,6 +43,7 @@ while (($#)); do
     -z|--tz) TIMEZONE="${2:?Missing timezone}"; shift 2 ;;
     --time) TIME_OVERRIDE="${2:?Missing time}"; shift 2 ;;
     --no-time) NO_TIME=true; shift ;;
+    --intent) INTENT="${2:?Missing intent}"; shift 2 ;;
     -n|--count) COUNT="${2:?Missing count}"; shift 2 ;;
     --context) CONTEXT="${2:?Missing context}"; shift 2 ;;
     --raw) RAW=true; shift ;;
@@ -59,6 +62,16 @@ case "$EFFORT" in
   default|none|low|medium|high|xhigh|max) ;;
   *) echo "Invalid effort: $EFFORT" >&2; exit 1 ;;
 esac
+
+case "$INTENT" in
+  free|observation|question|invitation|greeting) ;;
+  *) echo "Invalid intent: $INTENT" >&2; exit 1 ;;
+esac
+
+if [[ "$MODE" == "scheduled" && "$INTENT" != "free" ]]; then
+  echo "--intent is supported only for on_demand mode" >&2
+  exit 1
+fi
 
 [[ "$COUNT" =~ ^[1-9][0-9]*$ ]] || {
   echo "Count must be a positive integer" >&2
@@ -98,6 +111,10 @@ INSTRUCTIONS=$(
   cat "$DIR/examples.md"
   printf '\n\n'
   cat "$DIR/$MODE.md"
+  if [[ "$INTENT" != "free" ]]; then
+    printf '\n\n'
+    cat "$DIR/intents/$INTENT.md"
+  fi
 )
 
 if "$NO_TIME"; then
@@ -122,35 +139,39 @@ REQUEST=$(mktemp)
 RESPONSE=$(mktemp)
 trap 'rm -f "$REQUEST" "$RESPONSE"' EXIT
 
-# Build request from templates.
-jq \
-  --arg model "$MODEL" \
-  --arg effort "$EFFORT" \
-  --arg mode "$MODE" \
-  --arg instructions "$INSTRUCTIONS" \
-  --arg context "$USER_CONTEXT" \
-  --slurpfile schema "$DIR/scheduled.schema.json" \
-  '
-  .model = $model
-  | .instructions = $instructions
-  | .input[0].content = $context
-  | if $effort == "default"
-      then del(.reasoning)
-      else .reasoning = {"effort": $effort}
-    end
-  | if $mode == "scheduled"
-      then .text = {
-        "format": {
-          "type": "json_schema",
-          "name": "scheduled_nudge",
-          "strict": true,
-          "schema": $schema[0]
+# Each sample uses the same instructions and time, but sees earlier
+# messages from this batch to discourage repeated ideas.
+build_request() {
+  jq \
+    --arg model "$MODEL" \
+    --arg effort "$EFFORT" \
+    --arg mode "$MODE" \
+    --arg instructions "$INSTRUCTIONS" \
+    --arg context "$1" \
+    --slurpfile schema "$DIR/scheduled.schema.json" \
+    '
+    .model = $model
+    | .instructions = $instructions
+    | .input[0].content = $context
+    | if $effort == "default"
+        then del(.reasoning)
+        else .reasoning = {"effort": $effort}
+      end
+    | if $mode == "scheduled"
+        then .text = {
+          "format": {
+            "type": "json_schema",
+            "name": "scheduled_nudge",
+            "strict": true,
+            "schema": $schema[0]
+          }
         }
-      }
-      else del(.text)
-    end
-  ' "$DIR/request.json" > "$REQUEST"
+        else del(.text)
+      end
+    ' "$DIR/request.json" > "$REQUEST"
+}
 
+build_request "$USER_CONTEXT"
 if "$DRY_RUN"; then
   cat "$REQUEST"
   exit 0
@@ -167,11 +188,18 @@ fi
   exit 1
 }
 
-for ((i = 1; i <= COUNT; i++)); do
-  printf '\n--- %s | %s | %s | %d/%d ---\n' \
-    "$MODE" "$MODEL" "$EFFORT" "$i" "$COUNT"
+HISTORY='[]'
 
-  
+for ((i = 1; i <= COUNT; i++)); do
+  if ((i > 1)); then
+    PREVIOUS=$(jq -r 'to_entries | map("\(.key + 1). \(.value)") | join("\n")' <<< "$HISTORY")
+    REQUEST_CONTEXT=$(printf '%s\n\nПредыдущие сообщения из этой серии:\n%s\n\nСоздай новое сообщение. Не повторяй предыдущие не только дословно, но и по теме, образу, смыслу или речевой конструкции. Найди другую самостоятельную идею внутри заданного намерения.' "$USER_CONTEXT" "$PREVIOUS")
+    build_request "$REQUEST_CONTEXT"
+  fi
+
+  printf '\n--- %s | %s | %s | %s | %d/%d ---\n' \
+    "$MODE" "$INTENT" "$MODEL" "$EFFORT" "$i" "$COUNT"
+
   if ! LATENCY=$(curl -sS --fail-with-body \
     --write-out '%{time_total}' \
     https://api.openai.com/v1/responses \
@@ -186,7 +214,6 @@ for ((i = 1; i <= COUNT; i++)); do
 
   if "$RAW"; then
     jq . "$RESPONSE"
-    continue
   fi
 
   if ! jq -e '.status == "completed"' "$RESPONSE" >/dev/null; then
@@ -211,9 +238,10 @@ for ((i = 1; i <= COUNT; i++)); do
   fi
 
   if [[ "$MODE" == "scheduled" ]]; then
-    jq . <<< "$TEXT"
+    if ! "$RAW"; then jq . <<< "$TEXT"; fi
   else
-    printf '%s\n' "$TEXT"
+    if ! "$RAW"; then printf '%s\n' "$TEXT"; fi
+    HISTORY=$(jq -cn --argjson previous "$HISTORY" --arg text "$TEXT" '$previous + [$text]')
   fi
 
   jq -r '
