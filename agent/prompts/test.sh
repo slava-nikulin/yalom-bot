@@ -9,6 +9,8 @@ EFFORT="low"
 TIMEZONE="Europe/Moscow"
 TIME_OVERRIDE=""
 NO_TIME=false
+TIME_FOCUS=false
+CURATED=false
 INTENT="free"
 COUNT=1
 CONTEXT=""
@@ -27,7 +29,9 @@ Options:
       --time HH:MM      Override local time of day (e.g. 08:00)
       --no-time         Omit date and timezone context (on_demand only)
       --intent INTENT   free | observation | question | invitation | greeting
-  -n, --count N         Number of generations (later ones see earlier outputs)
+      --time-focus      Relate the message to local time of day
+      --curated         Pick from agent/corpus.json; fall back to LLM
+  -n, --count N         Number of generations (repeats are possible)
       --context TEXT    Additional user context
       --raw             Print complete API response
       --dry-run         Print request JSON without calling API
@@ -43,6 +47,8 @@ while (($#)); do
     -z|--tz) TIMEZONE="${2:?Missing timezone}"; shift 2 ;;
     --time) TIME_OVERRIDE="${2:?Missing time}"; shift 2 ;;
     --no-time) NO_TIME=true; shift ;;
+    --time-focus) TIME_FOCUS=true; shift ;;
+    --curated) CURATED=true; shift ;;
     --intent) INTENT="${2:?Missing intent}"; shift 2 ;;
     -n|--count) COUNT="${2:?Missing count}"; shift 2 ;;
     --context) CONTEXT="${2:?Missing context}"; shift 2 ;;
@@ -70,6 +76,11 @@ esac
 
 if [[ "$MODE" == "scheduled" && "$INTENT" != "free" ]]; then
   echo "--intent is supported only for on_demand mode" >&2
+  exit 1
+fi
+
+if "$CURATED" && [[ "$MODE" != "on_demand" || "$INTENT" == "free" ]]; then
+  echo "--curated requires --mode on_demand and a specific --intent" >&2
   exit 1
 fi
 
@@ -105,6 +116,16 @@ if "$NO_TIME" && [[ "$MODE" == "scheduled" ]]; then
   exit 1
 fi
 
+if "$TIME_FOCUS" && "$NO_TIME"; then
+  echo "--time-focus cannot be combined with --no-time" >&2
+  exit 1
+fi
+
+if "$TIME_FOCUS" && [[ "$MODE" != "on_demand" ]]; then
+  echo "--time-focus is supported only for on_demand mode" >&2
+  exit 1
+fi
+
 INSTRUCTIONS=$(
   cat "$DIR/identity.md"
   printf '\n\n'
@@ -116,6 +137,8 @@ INSTRUCTIONS=$(
     cat "$DIR/intents/$INTENT.md"
   fi
 )
+
+DAYPART="unknown"
 
 if "$NO_TIME"; then
   USER_CONTEXT="Время суток неизвестно. Не привязывай сообщение к определённому времени суток."
@@ -133,14 +156,28 @@ else
   USER_CONTEXT=$(printf \
     'Timezone: %s\nCurrent local datetime: %s\n%s' \
     "$TIMEZONE" "$NOW" "$CONTEXT")
+
+  HOUR=$((10#${NOW:11:2}))
+  if (( HOUR >= 5 && HOUR < 12 )); then
+    DAYPART="morning"
+  elif (( HOUR < 17 )); then
+    DAYPART="afternoon"
+  elif (( HOUR < 22 )); then
+    DAYPART="evening"
+  else
+    DAYPART="night"
+  fi
+fi
+
+if "$TIME_FOCUS"; then
+  USER_CONTEXT+=$'\n'"Тематический фокус: сообщение должно быть непосредственно связано с текущим временем суток. Свободно выбери конкретную мысль, сохраняя заданное намерение и характер Yalom."
 fi
 
 REQUEST=$(mktemp)
 RESPONSE=$(mktemp)
 trap 'rm -f "$REQUEST" "$RESPONSE"' EXIT
 
-# Each sample uses the same instructions and time, but sees earlier
-# messages from this batch to discourage repeated ideas.
+# Independent test requests: no history or deduplication.
 build_request() {
   jq \
     --arg model "$MODEL" \
@@ -172,33 +209,54 @@ build_request() {
 }
 
 build_request "$USER_CONTEXT"
-if "$DRY_RUN"; then
+
+# For a plain LLM dry run, preserve the original JSON output behavior.
+if "$DRY_RUN" && ! "$CURATED"; then
   cat "$REQUEST"
   exit 0
 fi
 
-# Read API key once. Never write it to disk.
-if [[ -z "${OPENAI_API_KEY:-}" ]]; then
-  read -r -s -p "OpenAI API key: " OPENAI_API_KEY </dev/tty
-  printf '\n' >&2
-fi
-
-[[ -n "$OPENAI_API_KEY" ]] || {
-  echo "OPENAI_API_KEY is empty" >&2
-  exit 1
-}
-
-HISTORY='[]'
-
 for ((i = 1; i <= COUNT; i++)); do
-  if ((i > 1)); then
-    PREVIOUS=$(jq -r 'to_entries | map("\(.key + 1). \(.value)") | join("\n")' <<< "$HISTORY")
-    REQUEST_CONTEXT=$(printf '%s\n\nПредыдущие сообщения из этой серии:\n%s\n\nСоздай новое сообщение. Не повторяй предыдущие не только дословно, но и по теме, образу, смыслу или речевой конструкции. Найди другую самостоятельную идею внутри заданного намерения.' "$USER_CONTEXT" "$PREVIOUS")
-    build_request "$REQUEST_CONTEXT"
-  fi
-
   printf '\n--- %s | %s | %s | %s | %d/%d ---\n' \
     "$MODE" "$INTENT" "$MODEL" "$EFFORT" "$i" "$COUNT"
+
+  SOURCE="llm"
+  if "$CURATED"; then
+    TEXT=$(jq -r \
+      --arg intent "$INTENT" \
+      --arg daypart "$DAYPART" \
+      --argjson focus "$TIME_FOCUS" \
+      --argjson random "$RANDOM" \
+      '[ .[$intent][]? | select(
+          .time_of_day == $daypart
+          or (($focus | not) and .time_of_day == "any")
+        ) | .text ]
+       | if length == 0 then "" else .[$random % length] end' \
+      "$DIR/../corpus.json")
+
+    if [[ -n "$TEXT" ]]; then
+      printf 'Source: curated\n%s\n' "$TEXT"
+      continue
+    fi
+    SOURCE="llm (curated fallback)"
+  fi
+
+  printf 'Source: %s\n' "$SOURCE"
+
+  if "$DRY_RUN"; then
+    cat "$REQUEST"
+    continue
+  fi
+
+  # No API key is needed unless the LLM is actually called.
+  if [[ -z "${OPENAI_API_KEY:-}" ]]; then
+    read -r -s -p "OpenAI API key: " OPENAI_API_KEY </dev/tty
+    printf '\n' >&2
+  fi
+  [[ -n "$OPENAI_API_KEY" ]] || {
+    echo "OPENAI_API_KEY is empty" >&2
+    exit 1
+  }
 
   if ! LATENCY=$(curl -sS --fail-with-body \
     --write-out '%{time_total}' \
@@ -241,7 +299,6 @@ for ((i = 1; i <= COUNT; i++)); do
     if ! "$RAW"; then jq . <<< "$TEXT"; fi
   else
     if ! "$RAW"; then printf '%s\n' "$TEXT"; fi
-    HISTORY=$(jq -cn --argjson previous "$HISTORY" --arg text "$TEXT" '$previous + [$text]')
   fi
 
   jq -r '
