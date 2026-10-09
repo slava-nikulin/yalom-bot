@@ -1,0 +1,19 @@
+{
+  "type": "object",
+  "properties": {
+    "text": {
+      "type": "string",
+      "description": "The existential nudge to deliver."
+    },
+    "send_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Future delivery time in RFC 3339 with UTC offset."
+    }
+  },
+  "required": [
+    "text",
+    "send_at"
+  ],
+  "additionalProperties": false
+}
