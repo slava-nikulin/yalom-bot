@@ -7,6 +7,8 @@ MODE="on_demand"
 MODEL="gpt-6-luna"
 EFFORT="low"
 TIMEZONE="Europe/Moscow"
+TIME_OVERRIDE=""
+NO_TIME=false
 COUNT=1
 CONTEXT=""
 RAW=false
@@ -21,6 +23,8 @@ Options:
       --model MODEL     OpenAI model ID
   -e, --effort EFFORT   default | none | low | medium | high | xhigh | max
   -z, --tz TIMEZONE     IANA timezone
+      --time HH:MM      Override local time of day (e.g. 08:00)
+      --no-time         Omit date and timezone context (on_demand only)
   -n, --count N         Number of independent generations
       --context TEXT    Additional user context
       --raw             Print complete API response
@@ -35,6 +39,8 @@ while (($#)); do
     --model) MODEL="${2:?Missing model}"; shift 2 ;;
     -e|--effort) EFFORT="${2:?Missing effort}"; shift 2 ;;
     -z|--tz) TIMEZONE="${2:?Missing timezone}"; shift 2 ;;
+    --time) TIME_OVERRIDE="${2:?Missing time}"; shift 2 ;;
+    --no-time) NO_TIME=true; shift ;;
     -n|--count) COUNT="${2:?Missing count}"; shift 2 ;;
     --context) CONTEXT="${2:?Missing context}"; shift 2 ;;
     --raw) RAW=true; shift ;;
@@ -71,7 +77,20 @@ done
   exit 1
 }
 
-NOW=$(TZ="$TIMEZONE" date '+%Y-%m-%dT%H:%M:%S%:z')
+if [[ -n "$TIME_OVERRIDE" ]] && ! [[ "$TIME_OVERRIDE" =~ ^([01][0-9]|2[0-3]):[0-5][0-9]$ ]]; then
+  echo "Invalid time: expected HH:MM (00:00–23:59)" >&2
+  exit 1
+fi
+
+if "$NO_TIME" && [[ -n "$TIME_OVERRIDE" ]]; then
+  echo "--no-time and --time cannot be used together" >&2
+  exit 1
+fi
+
+if "$NO_TIME" && [[ "$MODE" == "scheduled" ]]; then
+  echo "--no-time is only supported for on_demand mode" >&2
+  exit 1
+fi
 
 INSTRUCTIONS=$(
   cat "$DIR/identity.md"
@@ -81,9 +100,23 @@ INSTRUCTIONS=$(
   cat "$DIR/$MODE.md"
 )
 
-USER_CONTEXT=$(printf \
-  'Timezone: %s\nCurrent local datetime: %s\n%s' \
-  "$TIMEZONE" "$NOW" "$CONTEXT")
+if "$NO_TIME"; then
+  USER_CONTEXT="Время суток неизвестно. Не привязывай сообщение к определённому времени суток."
+  if [[ -n "$CONTEXT" ]]; then
+    USER_CONTEXT+=$'\n'"$CONTEXT"
+  fi
+else
+  if [[ -n "$TIME_OVERRIDE" ]]; then
+    TODAY=$(TZ="$TIMEZONE" date '+%Y-%m-%d')
+    NOW=$(TZ="$TIMEZONE" date -d "$TODAY $TIME_OVERRIDE" '+%Y-%m-%dT%H:%M:%S%:z')
+  else
+    NOW=$(TZ="$TIMEZONE" date '+%Y-%m-%dT%H:%M:%S%:z')
+  fi
+
+  USER_CONTEXT=$(printf \
+    'Timezone: %s\nCurrent local datetime: %s\n%s' \
+    "$TIMEZONE" "$NOW" "$CONTEXT")
+fi
 
 REQUEST=$(mktemp)
 RESPONSE=$(mktemp)
