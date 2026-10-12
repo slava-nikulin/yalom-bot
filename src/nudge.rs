@@ -80,6 +80,7 @@ where
         tz: Tz,
     ) -> Result<GeneratedNudge, NudgeServiceError> {
         let now_tz = now.with_timezone(&tz);
+        let mut daytime = get_daytime(now_tz.hour()).ok_or(NudgeServiceError::InappropriateTime)?;
 
         let intent = match rng.random_range((0..100).into()) {
             0..30 => NudgeIntent::Observation,
@@ -94,10 +95,8 @@ where
         let is_curated_source = rng.random_range((0..100).into()) < 20;
 
         let curated_text = if is_curated_source {
-            let daytime = if time_focus {
-                get_daytime(now_tz.hour()).ok_or(NudgeServiceError::InappropriateTime)?
-            } else {
-                NudgeDayTime::Any
+            if !time_focus {
+                daytime = NudgeDayTime::Any;
             };
 
             self.store
