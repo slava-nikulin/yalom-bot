@@ -3,7 +3,6 @@ set -euo pipefail
 
 DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 
-MODE="on_demand"
 MODEL="gpt-6-luna"
 EFFORT="low"
 TIMEZONE="Europe/Moscow"
@@ -22,12 +21,11 @@ usage() {
 Usage: ./test.sh [options]
 
 Options:
-  -m, --mode MODE       on_demand | scheduled
       --model MODEL     OpenAI model ID
   -e, --effort EFFORT   default | none | low | medium | high | xhigh | max
   -z, --tz TIMEZONE     IANA timezone
       --time HH:MM      Override local time of day (e.g. 08:00)
-      --no-time         Omit date and timezone context (on_demand only)
+      --no-time         Omit date and timezone context
       --intent INTENT   free | observation | question | invitation | greeting
       --time-focus      Relate the message to local time of day
       --curated         Pick from agent/corpus.json; fall back to LLM
@@ -41,7 +39,6 @@ EOF
 
 while (($#)); do
   case "$1" in
-    -m|--mode) MODE="${2:?Missing mode}"; shift 2 ;;
     --model) MODEL="${2:?Missing model}"; shift 2 ;;
     -e|--effort) EFFORT="${2:?Missing effort}"; shift 2 ;;
     -z|--tz) TIMEZONE="${2:?Missing timezone}"; shift 2 ;;
@@ -59,11 +56,6 @@ while (($#)); do
   esac
 done
 
-case "$MODE" in
-  on_demand|scheduled) ;;
-  *) echo "Invalid mode: $MODE" >&2; exit 1 ;;
-esac
-
 case "$EFFORT" in
   default|none|low|medium|high|xhigh|max) ;;
   *) echo "Invalid effort: $EFFORT" >&2; exit 1 ;;
@@ -74,13 +66,8 @@ case "$INTENT" in
   *) echo "Invalid intent: $INTENT" >&2; exit 1 ;;
 esac
 
-if [[ "$MODE" == "scheduled" && "$INTENT" != "free" ]]; then
-  echo "--intent is supported only for on_demand mode" >&2
-  exit 1
-fi
-
-if "$CURATED" && [[ "$MODE" != "on_demand" || "$INTENT" == "free" ]]; then
-  echo "--curated requires --mode on_demand and a specific --intent" >&2
+if "$CURATED" && [[ "$INTENT" == "free" ]]; then
+  echo "--curated requires a specific --intent" >&2
   exit 1
 fi
 
@@ -111,18 +98,8 @@ if "$NO_TIME" && [[ -n "$TIME_OVERRIDE" ]]; then
   exit 1
 fi
 
-if "$NO_TIME" && [[ "$MODE" == "scheduled" ]]; then
-  echo "--no-time is only supported for on_demand mode" >&2
-  exit 1
-fi
-
 if "$TIME_FOCUS" && "$NO_TIME"; then
   echo "--time-focus cannot be combined with --no-time" >&2
-  exit 1
-fi
-
-if "$TIME_FOCUS" && [[ "$MODE" != "on_demand" ]]; then
-  echo "--time-focus is supported only for on_demand mode" >&2
   exit 1
 fi
 
@@ -131,7 +108,7 @@ INSTRUCTIONS=$(
   printf '\n\n'
   cat "$DIR/examples.md"
   printf '\n\n'
-  cat "$DIR/$MODE.md"
+  cat "$DIR/message.md"
   if [[ "$INTENT" != "free" ]]; then
     printf '\n\n'
     cat "$DIR/intents/$INTENT.md"
@@ -182,10 +159,8 @@ build_request() {
   jq \
     --arg model "$MODEL" \
     --arg effort "$EFFORT" \
-    --arg mode "$MODE" \
     --arg instructions "$INSTRUCTIONS" \
     --arg context "$1" \
-    --slurpfile schema "$DIR/scheduled.schema.json" \
     '
     .model = $model
     | .instructions = $instructions
@@ -194,31 +169,20 @@ build_request() {
         then del(.reasoning)
         else .reasoning = {"effort": $effort}
       end
-    | if $mode == "scheduled"
-        then .text = {
-          "format": {
-            "type": "json_schema",
-            "name": "scheduled_nudge",
-            "strict": true,
-            "schema": $schema[0]
-          }
-        }
-        else del(.text)
-      end
     ' "$DIR/request.json" > "$REQUEST"
 }
 
 build_request "$USER_CONTEXT"
 
-# For a plain LLM dry run, preserve the original JSON output behavior.
+# For an LLM dry run, print the request JSON.
 if "$DRY_RUN" && ! "$CURATED"; then
   cat "$REQUEST"
   exit 0
 fi
 
 for ((i = 1; i <= COUNT; i++)); do
-  printf '\n--- %s | %s | %s | %s | %d/%d ---\n' \
-    "$MODE" "$INTENT" "$MODEL" "$EFFORT" "$i" "$COUNT"
+  printf '\n--- %s | %s | %s | %d/%d ---\n' \
+    "$INTENT" "$MODEL" "$EFFORT" "$i" "$COUNT"
 
   SOURCE="llm"
   if "$CURATED"; then
@@ -295,11 +259,7 @@ for ((i = 1; i <= COUNT; i++)); do
     exit 1
   fi
 
-  if [[ "$MODE" == "scheduled" ]]; then
-    if ! "$RAW"; then jq . <<< "$TEXT"; fi
-  else
-    if ! "$RAW"; then printf '%s\n' "$TEXT"; fi
-  fi
+  if ! "$RAW"; then printf '%s\n' "$TEXT"; fi
 
   jq -r '
     "Tokens: input=\(.usage.input_tokens), " +
