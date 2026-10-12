@@ -2,6 +2,7 @@
 set -euo pipefail
 
 DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+PROMPTS_DIR="$DIR/../prompts"
 
 MODEL="gpt-6-luna"
 EFFORT="low"
@@ -18,7 +19,7 @@ DRY_RUN=false
 
 usage() {
   cat <<'EOF'
-Usage: ./test.sh [options]
+Usage: ./agent/manual_test/test.sh [options]
 
 Options:
       --model MODEL     OpenAI model ID
@@ -28,7 +29,7 @@ Options:
       --no-time         Omit date and timezone context
       --intent INTENT   free | observation | question | invitation | greeting
       --time-focus      Relate the message to local time of day
-      --curated         Pick from agent/corpus.json; fall back to LLM
+      --curated         Pick from manual_test/corpus.json; fall back to LLM
   -n, --count N         Number of generations (repeats are possible)
       --context TEXT    Additional user context
       --raw             Print complete API response
@@ -104,14 +105,14 @@ if "$TIME_FOCUS" && "$NO_TIME"; then
 fi
 
 INSTRUCTIONS=$(
-  cat "$DIR/identity.md"
+  cat "$PROMPTS_DIR/identity.md"
   printf '\n\n'
-  cat "$DIR/examples.md"
+  cat "$PROMPTS_DIR/examples.md"
   printf '\n\n'
-  cat "$DIR/message.md"
+  cat "$PROMPTS_DIR/message.md"
   if [[ "$INTENT" != "free" ]]; then
     printf '\n\n'
-    cat "$DIR/intents/$INTENT.md"
+    cat "$PROMPTS_DIR/intents/$INTENT.md"
   fi
 )
 
@@ -196,7 +197,7 @@ for ((i = 1; i <= COUNT; i++)); do
           or (($focus | not) and .time_of_day == "any")
         ) | .text ]
        | if length == 0 then "" else .[$random % length] end' \
-      "$DIR/../corpus.json")
+      "$DIR/corpus.json")
 
     if [[ -n "$TEXT" ]]; then
       printf 'Source: curated\n%s\n' "$TEXT"
