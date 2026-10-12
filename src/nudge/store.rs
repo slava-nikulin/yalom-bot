@@ -6,7 +6,7 @@ pub trait NudgeStore: Clone + Send + Sync + 'static {
     fn get_random_nudge(
         &self,
         intent: NudgeIntent,
-        daytime: Option<NudgeDayTime>,
+        daytime: NudgeDayTime,
     ) -> impl std::future::Future<Output = Result<Option<String>, Error>> + Send;
 }
 
@@ -25,7 +25,7 @@ impl NudgeStore for NudgeMySqlStore {
     async fn get_random_nudge(
         &self,
         intent: NudgeIntent,
-        daytime: Option<NudgeDayTime>,
+        daytime: NudgeDayTime,
     ) -> Result<Option<String>, Error> {
         sqlx::query_scalar::<_, String>(
             r#"
@@ -38,7 +38,7 @@ impl NudgeStore for NudgeMySqlStore {
             "#,
         )
         .bind(intent)
-        .bind(daytime.unwrap_or(NudgeDayTime::Any))
+        .bind(daytime)
         .fetch_optional(&self.pool)
         .await
     }

@@ -16,7 +16,7 @@ pub mod store;
 
 const IDENTITY_PROMPT: &str = include_str!("../agent/prompts/identity.md");
 const EXAMPLES_PROMPT: &str = include_str!("../agent/prompts/examples.md");
-const ON_DEMAND_MODE_PROMPT: &str = include_str!("../agent/prompts/on_demand.md");
+const MESSAGE_PROMPT: &str = include_str!("../agent/prompts/message.md");
 
 const GREETING_INTENT_PROMPT: &str = include_str!("../agent/prompts/intents/greeting.md");
 const INVITATION_INTENT_PROMPT: &str = include_str!("../agent/prompts/intents/invitation.md");
@@ -27,6 +27,9 @@ const TIME_FOCUS_PROMPT: &str = "Тематический фокус: сообщ
 
 #[derive(Debug, thiserror::Error)]
 pub enum NudgeServiceError {
+    #[error("Inappropriate time")]
+    InappropriateTime,
+
     #[error("openAI adapter error")]
     OpenAiAdapterError(#[source] AdapterError),
 
@@ -91,12 +94,12 @@ where
         let is_curated_source = rng.random_range((0..100).into()) < 20;
 
         let curated_text = if is_curated_source {
-            source = NudgeSource::Curated;
             let daytime = if time_focus {
-                get_daytime(now_tz.hour())
+                get_daytime(now_tz.hour()).ok_or(NudgeServiceError::InappropriateTime)?
             } else {
-                None
+                NudgeDayTime::Any
             };
+
             self.store
                 .get_random_nudge(intent, daytime)
                 .await
@@ -106,6 +109,7 @@ where
         };
 
         let text = if let Some(curated_text_val) = curated_text {
+            source = NudgeSource::Curated;
             curated_text_val
         } else {
             self.open_ai_generate(intent, now_tz, time_focus).await?
@@ -141,7 +145,7 @@ fn build_llm_request(intent: NudgeIntent, now_tz: DateTime<Tz>, time_focus: bool
     let instructions = [
         IDENTITY_PROMPT,
         EXAMPLES_PROMPT,
-        ON_DEMAND_MODE_PROMPT,
+        MESSAGE_PROMPT,
         get_intent_prompt(intent),
     ]
     .join("\n");
