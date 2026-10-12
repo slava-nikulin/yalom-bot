@@ -9,3 +9,13 @@ pub struct MenuState {
 pub struct UpdateMenuRequest {
     pub paused: bool,
 }
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct NudgeResponse {
+    pub text: String,
+}
+
+#[derive(Deserialize)]
+pub struct GenerateNudgeRequest {
+    pub timezone: String,
+}

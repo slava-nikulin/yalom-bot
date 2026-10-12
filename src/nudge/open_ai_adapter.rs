@@ -26,7 +26,7 @@ pub struct LlmResponse {
     pub text: String,
 }
 
-pub trait LlmAdapter {
+pub trait LlmAdapter: Send + Sync + 'static {
     fn execute(
         &self,
         request: LlmRequest,

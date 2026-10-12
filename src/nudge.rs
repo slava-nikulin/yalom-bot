@@ -2,6 +2,7 @@ use std::range::Range;
 
 use chrono::{DateTime, SecondsFormat, Timelike, Utc};
 use chrono_tz::Tz;
+use rand::{RngExt, rngs::ThreadRng};
 
 use crate::nudge::{
     NudgeServiceError::OpenAiAdapterError,
@@ -46,6 +47,14 @@ pub trait RandomRange {
     fn random_range(&mut self, range: Range<u32>) -> u32;
 }
 
+pub struct DefaultRng;
+
+impl RandomRange for DefaultRng {
+    fn random_range(&mut self, range: Range<u32>) -> u32 {
+        rand::random_range(std::ops::Range::<u32>::from(range))
+    }
+}
+
 pub struct GeneratedNudge {
     pub text: String,
     pub intent: NudgeIntent,
@@ -76,10 +85,9 @@ where
     pub async fn generate<R: RandomRange>(
         &self,
         mut rng: R,
-        now: DateTime<Utc>,
-        tz: Tz,
+        now: DateTime<Tz>,
     ) -> Result<GeneratedNudge, NudgeServiceError> {
-        let now_tz = now.with_timezone(&tz);
+        let now_tz = now.with_timezone(&now.timezone());
         let current_daytime =
             get_daytime(now_tz.hour()).ok_or(NudgeServiceError::InappropriateTime)?;
 
@@ -189,3 +197,6 @@ fn pick_intent<R: RandomRange>(rng: &mut R) -> NudgeIntent {
         _ => NudgeIntent::Greeting,
     }
 }
+
+#[cfg(test)]
+mod tests;

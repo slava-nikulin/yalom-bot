@@ -1,13 +1,13 @@
 use rustigram_api::BotClient;
 use rustigram_types::{MenuButton, WebAppInfo};
-use yalom_bot::config::Config;
+use yalom_bot::config::tg_setup_config::TelegramSetupConfig;
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt::init();
 
-    let cfg = Config::load()?;
-    let webhook_secret = cfg.telegram.webhook.secret_token;
+    let cfg = TelegramSetupConfig::load()?;
+    let webhook_secret = cfg.telegram.webhook.secret;
 
     anyhow::ensure!(
         webhook_secret.len() >= 32,

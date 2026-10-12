@@ -1,6 +1,8 @@
 pub mod dto;
 pub mod extractors;
 
+use std::sync::Arc;
+
 use axum::{
     Json, Router,
     extract::{FromRef, FromRequestParts, State},
@@ -8,6 +10,8 @@ use axum::{
     response::{IntoResponse, Response},
     routing::{get, post},
 };
+use chrono::Utc;
+use chrono_tz::Tz::{self};
 use tower_cookies::{
     Cookie, Cookies,
     cookie::{SameSite, time::Duration},
@@ -16,9 +20,10 @@ use tower_cookies::{
 use crate::{
     app_state::{SessionState, UserStoreState},
     http::miniapp::{
-        dto::{MenuState, UpdateMenuRequest},
+        dto::{GenerateNudgeRequest, MenuState, NudgeResponse, UpdateMenuRequest},
         extractors::{SESSION_COOKIE_NAME, ValidatedInitData},
     },
+    nudge::{DefaultRng, NudgeService, open_ai_adapter::LlmAdapter, store::NudgeStore},
     security::session::{SESSION_TTL_SECONDS, SessionError, SessionIdentity},
     user::store::{UserStore, UserStoreError},
 };
@@ -55,17 +60,21 @@ impl IntoResponse for MiniAppErr {
     }
 }
 
-pub fn router<S, Us>() -> Router<S>
+pub fn router<S, Us, A, Ns>() -> Router<S>
 where
     S: Clone + Send + Sync + 'static,
     Us: UserStore,
+    Ns: NudgeStore,
+    A: LlmAdapter,
     UserStoreState<Us>: FromRef<S>,
     SessionState: FromRef<S>,
+    Arc<NudgeService<A, Ns>>: FromRef<S>,
     ValidatedInitData: FromRequestParts<S>,
 {
     let api_router = Router::new()
         .route("/session", post(issue_session))
-        .route("/menu", get(get_menu).patch(update_bot_settings));
+        .route("/menu", get(get_menu).patch(update_bot_settings))
+        .route("/nudge", post(generate_nudge_manual));
     Router::new().nest("/api/miniapp", api_router)
 }
 
@@ -97,6 +106,8 @@ async fn get_menu<Us: UserStore>(
     identity: SessionIdentity,
     State(UserStoreState(state)): State<UserStoreState<Us>>,
 ) -> Result<Json<MenuState>, StatusCode> {
+    // TODO: получать tz из miniapp(заголовок?) и сохранять в пользователе
+
     let user = state
         .get(identity.tg_user_id)
         .await
@@ -137,4 +148,36 @@ async fn update_bot_settings<Us: UserStore>(
     Ok(Json(MenuState {
         paused: request.paused,
     }))
+}
+
+async fn generate_nudge_manual<Us, A, Ns>(
+    identity: SessionIdentity,
+    State(UserStoreState(_user_store)): State<UserStoreState<Us>>,
+    State(nudge_service): State<Arc<NudgeService<A, Ns>>>,
+    Json(request): Json<GenerateNudgeRequest>,
+) -> Result<Json<NudgeResponse>, StatusCode>
+where
+    Us: UserStore,
+    A: LlmAdapter,
+    Ns: NudgeStore,
+{
+    let tz: Tz = request
+        .timezone
+        .parse()
+        .map_err(|_| StatusCode::BAD_REQUEST)?;
+
+    let now = Utc::now().with_timezone(&tz);
+    let nudge = nudge_service
+        .generate(DefaultRng, now)
+        .await
+        .map_err(|err| {
+            tracing::error!(
+                error = %err,
+                tg_user_id = identity.tg_user_id,
+                "failed to generate the nudge"
+            );
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
+
+    Ok(Json(NudgeResponse { text: nudge.text }))
 }
