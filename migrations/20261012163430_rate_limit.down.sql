@@ -1,0 +1,1 @@
+DROP TABLE IF EXISTS manual_nudge_rate_limits;

@@ -115,14 +115,10 @@ fn test_service(
     (service, store, llm)
 }
 
-fn now(utc_hour: u32) -> DateTime<Utc> {
+fn now(utc_hour: u32) -> DateTime<Tz> {
     DateTime::parse_from_rfc3339(&format!("2026-10-12T{utc_hour:02}:00:00Z"))
         .unwrap()
-        .with_timezone(&Utc)
-}
-
-fn tz() -> Tz {
-    chrono_tz::Asia::Almaty
+        .with_timezone(&chrono_tz::Asia::Almaty)
 }
 
 fn assert_store_called(store: &FakeStore, intent: NudgeIntent, daytime: NudgeDayTime) {
@@ -152,7 +148,7 @@ async fn curated_returns_text_without_calling_llm() {
         // curated = true
         let rng = FakeRng::new([49, 0, 19]);
 
-        let result = service.generate(rng, now(utc_hour), tz()).await.unwrap();
+        let result = service.generate(rng, now(utc_hour)).await.unwrap();
 
         assert_eq!(result.text, "Curated text");
         assert!(matches!(result.source, NudgeSource::Curated));
@@ -174,7 +170,7 @@ async fn curated_without_time_focus_uses_any() {
     // curated = true
     let rng = FakeRng::new([50, 60, 0]);
 
-    let result = service.generate(rng, now(3), tz()).await.unwrap();
+    let result = service.generate(rng, now(3)).await.unwrap();
 
     assert_eq!(result.text, "General question");
     assert!(matches!(result.source, NudgeSource::Curated));
@@ -194,7 +190,7 @@ async fn llm_generation_skips_store() {
     // curated = false
     let rng = FakeRng::new([50, 90, 20]);
 
-    let result = service.generate(rng, now(3), tz()).await.unwrap();
+    let result = service.generate(rng, now(3)).await.unwrap();
 
     assert_eq!(result.text, "Hello!");
     assert!(matches!(result.source, NudgeSource::OpenAi));
@@ -238,7 +234,7 @@ async fn curated_miss_falls_back_to_llm() {
     // curated = true
     let rng = FakeRng::new([0, 30, 0]);
 
-    let result = service.generate(rng, now(3), tz()).await.unwrap();
+    let result = service.generate(rng, now(3)).await.unwrap();
 
     assert_eq!(result.text, "Generated invitation");
     assert!(matches!(result.source, NudgeSource::OpenAi));
@@ -266,7 +262,7 @@ async fn store_error_is_propagated() {
     // curated = true
     let rng = FakeRng::new([0, 60, 0]);
 
-    let result = service.generate(rng, now(3), tz()).await;
+    let result = service.generate(rng, now(3)).await;
 
     assert!(matches!(
         result,
@@ -286,7 +282,7 @@ async fn llm_error_is_propagated() {
 
     let rng = FakeRng::new([50, 0, 20]);
 
-    let result = service.generate(rng, now(3), tz()).await;
+    let result = service.generate(rng, now(3)).await;
 
     assert!(matches!(
         result,
@@ -309,7 +305,7 @@ async fn inappropriate_time_rejects_generation() {
         // RNG не должен вызываться вообще.
         let rng = FakeRng::new([]);
 
-        let result = service.generate(rng, now(utc_hour), tz()).await;
+        let result = service.generate(rng, now(utc_hour)).await;
 
         assert!(matches!(result, Err(NudgeServiceError::InappropriateTime)));
 
@@ -335,7 +331,7 @@ async fn intent_probability_boundaries() {
         // time_focus = false, curated = false
         let rng = FakeRng::new([50, roll, 20]);
 
-        let result = service.generate(rng, now(3), tz()).await.unwrap();
+        let result = service.generate(rng, now(3)).await.unwrap();
 
         assert_eq!(
             discriminant(&result.intent),

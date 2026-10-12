@@ -1,8 +1,7 @@
 use std::range::Range;
 
-use chrono::{DateTime, SecondsFormat, Timelike, Utc};
+use chrono::{DateTime, SecondsFormat, Timelike};
 use chrono_tz::Tz;
-use rand::{RngExt, rngs::ThreadRng};
 
 use crate::nudge::{
     NudgeServiceError::OpenAiAdapterError,
@@ -13,6 +12,7 @@ use crate::nudge::{
 
 pub mod model;
 pub mod open_ai_adapter;
+pub mod rate_limit;
 pub mod store;
 
 const IDENTITY_PROMPT: &str = include_str!("../agent/prompts/identity.md");
@@ -87,9 +87,8 @@ where
         mut rng: R,
         now: DateTime<Tz>,
     ) -> Result<GeneratedNudge, NudgeServiceError> {
-        let now_tz = now.with_timezone(&now.timezone());
         let current_daytime =
-            get_daytime(now_tz.hour()).ok_or(NudgeServiceError::InappropriateTime)?;
+            get_daytime(now.hour()).ok_or(NudgeServiceError::InappropriateTime)?;
 
         let time_focus = chance(&mut rng, 50);
         let daytime = if time_focus {
@@ -111,7 +110,7 @@ where
         let (text, source) = match curated {
             Some(text) => (text, NudgeSource::Curated),
             None => (
-                self.open_ai_generate(intent, now_tz, time_focus).await?,
+                self.open_ai_generate(intent, now, time_focus).await?,
                 NudgeSource::OpenAi,
             ),
         };
@@ -127,10 +126,10 @@ where
     async fn open_ai_generate(
         &self,
         intent: NudgeIntent,
-        now_tz: DateTime<Tz>,
+        now: DateTime<Tz>,
         time_focus: bool,
     ) -> Result<String, NudgeServiceError> {
-        let llm_request = build_llm_request(intent, now_tz, time_focus);
+        let llm_request = build_llm_request(intent, now, time_focus);
 
         let llm_resp = self
             .open_ai_adapter
@@ -142,7 +141,7 @@ where
     }
 }
 
-fn build_llm_request(intent: NudgeIntent, now_tz: DateTime<Tz>, time_focus: bool) -> LlmRequest {
+fn build_llm_request(intent: NudgeIntent, now: DateTime<Tz>, time_focus: bool) -> LlmRequest {
     let instructions = [
         IDENTITY_PROMPT,
         EXAMPLES_PROMPT,
@@ -153,8 +152,8 @@ fn build_llm_request(intent: NudgeIntent, now_tz: DateTime<Tz>, time_focus: bool
 
     let mut context = format!(
         "Current date and time: {}\nTimezone: {}",
-        now_tz.to_rfc3339_opts(SecondsFormat::Secs, true),
-        now_tz.timezone(),
+        now.to_rfc3339_opts(SecondsFormat::Secs, true),
+        now.timezone(),
     );
     if time_focus {
         context.push('\n');

@@ -1,4 +1,4 @@
-pub mod update_service;
+pub mod sender;
 
 use rustigram_api::BotClient;
 

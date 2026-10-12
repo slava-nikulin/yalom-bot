@@ -11,13 +11,13 @@ use rustigram_types::{Update, UpdateKind};
 
 use crate::{
     http::telegram::extractors::ValidWebhookSecret,
-    telegram::update_service::{TgUpdateJob, TgUpdateService},
+    telegram::sender::{TgSenderJob, TgSenderService},
 };
 
 pub fn router<S>() -> Router<S>
 where
     S: Clone + Send + Sync + 'static,
-    TgUpdateService: FromRef<S>,
+    TgSenderService: FromRef<S>,
     ValidWebhookSecret: FromRequestParts<S>,
 {
     Router::<S>::new().route("/tg/webhook", post(tg_webhook))
@@ -25,7 +25,7 @@ where
 
 async fn tg_webhook(
     _: ValidWebhookSecret,
-    State(state): State<TgUpdateService>,
+    State(state): State<TgSenderService>,
     Json(update): Json<Update>,
 ) -> StatusCode {
     let UpdateKind::Message(message) = update.kind else {
@@ -42,7 +42,7 @@ async fn tg_webhook(
             return StatusCode::OK;
         };
 
-        TgUpdateJob::Start {
+        TgSenderJob::Start {
             tg_user_id: tg_user.id,
             chat_id: message.chat.id,
         }
@@ -51,7 +51,7 @@ async fn tg_webhook(
             return StatusCode::OK;
         };
 
-        TgUpdateJob::Message {
+        TgSenderJob::Message {
             chat_id: message.chat.id,
             text,
         }

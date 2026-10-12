@@ -10,19 +10,9 @@ pub struct TelegramSetupConfig {
 #[derive(Deserialize)]
 pub struct TelegramSetupTelegramConfig {
     pub token: String,
-    pub webhook: WebhookConfig,
-    pub miniapp: TelegramSetupMiniAppConfig,
-}
-
-#[derive(Deserialize)]
-pub struct TelegramSetupMiniAppConfig {
-    pub url: url::Url,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct WebhookConfig {
-    pub url: url::Url,
-    pub secret: String,
+    pub webhook_url: url::Url,
+    pub webhook_secret: String,
+    pub miniapp_url: url::Url,
 }
 
 impl TelegramSetupConfig {

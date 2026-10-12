@@ -23,8 +23,17 @@ use crate::{
         dto::{GenerateNudgeRequest, MenuState, NudgeResponse, UpdateMenuRequest},
         extractors::{SESSION_COOKIE_NAME, ValidatedInitData},
     },
-    nudge::{DefaultRng, NudgeService, open_ai_adapter::LlmAdapter, store::NudgeStore},
+    nudge::{
+        DefaultRng, NudgeService, NudgeServiceError,
+        open_ai_adapter::LlmAdapter,
+        rate_limit::{ManualNudgeMySqlLimiter, RateLimitDecision},
+        store::NudgeStore,
+    },
     security::session::{SESSION_TTL_SECONDS, SessionError, SessionIdentity},
+    telegram::{
+        TelegramClient,
+        sender::{TgSenderJob, TgSenderService},
+    },
     user::store::{UserStore, UserStoreError},
 };
 
@@ -69,6 +78,8 @@ where
     UserStoreState<Us>: FromRef<S>,
     SessionState: FromRef<S>,
     Arc<NudgeService<A, Ns>>: FromRef<S>,
+    ManualNudgeMySqlLimiter: FromRef<S>,
+    TgSenderService: FromRef<S>,
     ValidatedInitData: FromRequestParts<S>,
 {
     let api_router = Router::new()
@@ -152,8 +163,10 @@ async fn update_bot_settings<Us: UserStore>(
 
 async fn generate_nudge_manual<Us, A, Ns>(
     identity: SessionIdentity,
-    State(UserStoreState(_user_store)): State<UserStoreState<Us>>,
+    State(UserStoreState(user_store)): State<UserStoreState<Us>>,
     State(nudge_service): State<Arc<NudgeService<A, Ns>>>,
+    State(limiter): State<ManualNudgeMySqlLimiter>,
+    State(tg_service): State<TgSenderService>,
     Json(request): Json<GenerateNudgeRequest>,
 ) -> Result<Json<NudgeResponse>, StatusCode>
 where
@@ -161,23 +174,71 @@ where
     A: LlmAdapter,
     Ns: NudgeStore,
 {
+    let user = user_store
+        .get(identity.tg_user_id)
+        .await
+        .map_err(|err| match err {
+            UserStoreError::Database(_) => {
+                tracing::error!(error = %err, "failed to load user");
+                StatusCode::INTERNAL_SERVER_ERROR
+            }
+            UserStoreError::NotFound => StatusCode::NOT_FOUND,
+        })?;
+
     let tz: Tz = request
         .timezone
         .parse()
         .map_err(|_| StatusCode::BAD_REQUEST)?;
 
+    match limiter.acquire(identity.tg_user_id).await {
+        Ok(RateLimitDecision::Allowed) => {}
+
+        Ok(RateLimitDecision::Rejected {
+            reason,
+            retry_after,
+        }) => {
+            // Преобразуем в HTTP 429 + Retry-After.
+            // Reason определяет машинный код ошибки для MiniApp.
+        }
+
+        Err(err) => {
+            tracing::error!(error = %err, "rate limit database error");
+            // HTTP 503 Service Unavailable
+        }
+    }
+
     let now = Utc::now().with_timezone(&tz);
     let nudge = nudge_service
         .generate(DefaultRng, now)
         .await
-        .map_err(|err| {
-            tracing::error!(
-                error = %err,
-                tg_user_id = identity.tg_user_id,
-                "failed to generate the nudge"
-            );
-            StatusCode::INTERNAL_SERVER_ERROR
+        .map_err(|err| match err {
+            NudgeServiceError::InappropriateTime => StatusCode::UNPROCESSABLE_ENTITY,
+            other => {
+                tracing::error!(
+                    error = %other,
+                    tg_user_id = identity.tg_user_id,
+                    "failed to generate the nudge"
+                );
+                StatusCode::INTERNAL_SERVER_ERROR
+            }
         })?;
+
+    let tg_send_job = TgSenderJob::Message {
+        chat_id: user.chat_id,
+        text: nudge.text.clone(),
+    };
+
+    if let Err(err) = tg_service.enqueue(tg_send_job).await {
+        tracing::error!(
+            error = %err,
+            chat_id = %user.chat_id,
+            "failed to enqueue telegram update"
+        );
+
+        Err(StatusCode::SERVICE_UNAVAILABLE)
+    } else {
+        Ok(StatusCode::OK)
+    }
 
     Ok(Json(NudgeResponse { text: nudge.text }))
 }

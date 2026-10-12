@@ -14,6 +14,13 @@ pub struct AppConfig {
 }
 
 #[derive(Deserialize)]
+pub struct TelegramConfig {
+    pub token: String,
+    pub miniapp_session_key: String,
+    pub webhook_secret: String,
+}
+
+#[derive(Deserialize)]
 pub struct DatabaseConfig {
     pub url: String,
 }
@@ -21,13 +28,6 @@ pub struct DatabaseConfig {
 #[derive(Deserialize)]
 pub struct OpenAiConfig {
     pub api_key: String,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct TelegramConfig {
-    pub token: String,
-    pub miniapp_session_key: String,
-    pub web_hook_secret: String,
 }
 
 #[derive(Debug, Deserialize)]

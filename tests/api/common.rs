@@ -7,10 +7,16 @@ use axum::Router;
 use yalom_bot::{
     app_state::AppState,
     http::app_router,
+    nudge::{
+        NudgeService,
+        open_ai_adapter::{AdapterError, LlmAdapter, LlmRequest, LlmResponse},
+        rate_limit::ManualNudgeMySqlLimiter,
+        store::NudgeMySqlStore,
+    },
     security::session::Sessions,
     telegram::{
         TelegramClient,
-        update_service::{TgUpdateJob, TgUpdateService},
+        sender::{TgSenderJob, TgSenderService},
     },
     user::store::MySqlUserStore,
     worker_pool::WorkerPool,
@@ -47,10 +53,19 @@ impl TelegramClient for TestBotClient {
     }
 }
 
+#[derive(Default)]
+pub struct OpenAiFakeAdapter {}
+
+impl LlmAdapter for OpenAiFakeAdapter {
+    async fn execute(&self, request: LlmRequest) -> Result<LlmResponse, AdapterError> {
+        todo!()
+    }
+}
+
 pub struct TestApp {
     pub router: Router,
     pub tg_calls: Arc<Mutex<Vec<TgCall>>>,
-    pub tg_update_job_wp: WorkerPool<TgUpdateJob>,
+    pub tg_update_job_wp: WorkerPool<TgSenderJob>,
 }
 
 impl TestApp {
@@ -60,7 +75,13 @@ impl TestApp {
         let tg_calls = tg_bot_client.calls.clone();
 
         let (tg_update_service, tg_update_job_wp) =
-            TgUpdateService::new(tg_bot_client.clone(), user_store.clone(), 1, 10);
+            TgSenderService::new(tg_bot_client.clone(), user_store.clone(), 1, 10);
+
+        let nudge_service = NudgeService::new(
+            OpenAiFakeAdapter::default(),
+            NudgeMySqlStore::new(db.clone()),
+        );
+        let nudge_limiter = ManualNudgeMySqlLimiter::new(db);
 
         let app_state = AppState::new(
             TG_TOKEN,
@@ -69,6 +90,8 @@ impl TestApp {
             tg_bot_client,
             user_store,
             tg_update_service,
+            nudge_service,
+            nudge_limiter,
         );
 
         let router = app_router(app_state);

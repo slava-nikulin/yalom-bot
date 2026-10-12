@@ -7,7 +7,7 @@ async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt::init();
 
     let cfg = TelegramSetupConfig::load()?;
-    let webhook_secret = cfg.telegram.webhook.secret;
+    let webhook_secret = cfg.telegram.webhook_secret;
 
     anyhow::ensure!(
         webhook_secret.len() >= 32,
@@ -16,12 +16,12 @@ async fn main() -> anyhow::Result<()> {
 
     let bot = BotClient::from_token(cfg.telegram.token)?;
 
-    bot.set_webhook(cfg.telegram.webhook.url.clone())
+    bot.set_webhook(cfg.telegram.webhook_url.clone())
         .secret_token(webhook_secret)
         .await?;
 
     tracing::info!(
-        webhook_url = %cfg.telegram.webhook.url,
+        webhook_url = %cfg.telegram.webhook_url,
         "telegram webhook configured"
     );
 
@@ -29,13 +29,13 @@ async fn main() -> anyhow::Result<()> {
         .menu_button(MenuButton::WebApp {
             text: "Menu".to_owned(),
             web_app: WebAppInfo {
-                url: cfg.telegram.miniapp.url.to_string(),
+                url: cfg.telegram.miniapp_url.to_string(),
             },
         })
         .await?;
 
     tracing::info!(
-        miniapp_url = %cfg.telegram.miniapp.url,
+        miniapp_url = %cfg.telegram.miniapp_url,
         "telegram mini app menu button configured"
     );
 

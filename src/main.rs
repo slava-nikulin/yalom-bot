@@ -10,10 +10,11 @@ use yalom_bot::{
     nudge::{
         NudgeService,
         open_ai_adapter::{self, OpenAiAdapter},
+        rate_limit::ManualNudgeMySqlLimiter,
         store::NudgeMySqlStore,
     },
     security::session::Sessions,
-    telegram::update_service::TgUpdateService,
+    telegram::sender::TgSenderService,
     user::store::MySqlUserStore,
 };
 
@@ -30,19 +31,20 @@ async fn main() -> anyhow::Result<()> {
         .with_env_filter(filter)
         .init();
 
-    let tg_webhook_secret_token = &cfg.telegram.web_hook_secret;
+    let tg_webhook_secret_token = &cfg.telegram.webhook_secret;
 
     let tg_bot = BotClient::from_token(&cfg.telegram.token)?;
 
     let db = MySqlPoolOptions::new().connect(&cfg.database.url).await?;
     let user_store = MySqlUserStore::new(db.clone());
-    let nudge_store = NudgeMySqlStore::new(db);
+    let nudge_store = NudgeMySqlStore::new(db.clone());
+    let nudge_limiter = ManualNudgeMySqlLimiter::new(db);
 
     let open_ai_adapter = OpenAiAdapter::new(cfg.openai.api_key.clone());
     let sessions = Sessions::new(&cfg.telegram.miniapp_session_key);
 
     let (tg_update_service, telegram_update_pool) =
-        TgUpdateService::new(tg_bot.clone(), user_store.clone(), 2, 10);
+        TgSenderService::new(tg_bot.clone(), user_store.clone(), 2, 10);
 
     let nudge_service = NudgeService::new(open_ai_adapter, nudge_store);
 
@@ -54,6 +56,7 @@ async fn main() -> anyhow::Result<()> {
         user_store,
         tg_update_service,
         nudge_service,
+        nudge_limiter,
     );
     let app_router = app_router(app_state);
 
