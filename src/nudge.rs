@@ -80,25 +80,18 @@ where
         tz: Tz,
     ) -> Result<GeneratedNudge, NudgeServiceError> {
         let now_tz = now.with_timezone(&tz);
-        let mut daytime = get_daytime(now_tz.hour()).ok_or(NudgeServiceError::InappropriateTime)?;
+        let current_daytime =
+            get_daytime(now_tz.hour()).ok_or(NudgeServiceError::InappropriateTime)?;
 
-        let intent = match rng.random_range((0..100).into()) {
-            0..30 => NudgeIntent::Observation,
-            30..60 => NudgeIntent::Invitation,
-            60..90 => NudgeIntent::Question,
-            _ => NudgeIntent::Greeting,
+        let time_focus = chance(&mut rng, 50);
+        let daytime = if time_focus {
+            current_daytime
+        } else {
+            NudgeDayTime::Any
         };
+        let intent = pick_intent(&mut rng);
 
-        let time_focus = matches!(rng.random_range((0..100).into()), 0..50);
-
-        let mut source = NudgeSource::OpenAi;
-        let is_curated_source = rng.random_range((0..100).into()) < 20;
-
-        let curated_text = if is_curated_source {
-            if !time_focus {
-                daytime = NudgeDayTime::Any;
-            };
-
+        let curated = if chance(&mut rng, 20) {
             self.store
                 .get_random_nudge(intent, daytime)
                 .await
@@ -107,11 +100,12 @@ where
             None
         };
 
-        let text = if let Some(curated_text_val) = curated_text {
-            source = NudgeSource::Curated;
-            curated_text_val
-        } else {
-            self.open_ai_generate(intent, now_tz, time_focus).await?
+        let (text, source) = match curated {
+            Some(text) => (text, NudgeSource::Curated),
+            None => (
+                self.open_ai_generate(intent, now_tz, time_focus).await?,
+                NudgeSource::OpenAi,
+            ),
         };
 
         Ok(GeneratedNudge {
@@ -180,5 +174,18 @@ fn get_intent_prompt(intent: NudgeIntent) -> &'static str {
         NudgeIntent::Question => QUESTION_INTENT_PROMPT,
         NudgeIntent::Invitation => INVITATION_INTENT_PROMPT,
         NudgeIntent::Greeting => GREETING_INTENT_PROMPT,
+    }
+}
+
+fn chance<R: RandomRange>(rng: &mut R, percent: u32) -> bool {
+    rng.random_range((0..100).into()) < percent
+}
+
+fn pick_intent<R: RandomRange>(rng: &mut R) -> NudgeIntent {
+    match rng.random_range((0..100).into()) {
+        0..30 => NudgeIntent::Observation,
+        30..60 => NudgeIntent::Invitation,
+        60..90 => NudgeIntent::Question,
+        _ => NudgeIntent::Greeting,
     }
 }
