@@ -23,8 +23,6 @@ const INVITATION_INTENT_PROMPT: &str = include_str!("../agent/prompts/intents/in
 const OBSERVATION_INTENT_PROMPT: &str = include_str!("../agent/prompts/intents/observation.md");
 const QUESTION_INTENT_PROMPT: &str = include_str!("../agent/prompts/intents/question.md");
 
-// const NO_TIME_PROMPT: &str =
-// "Время суток неизвестно. Не привязывай сообщение к определённому времени суток.";
 const TIME_FOCUS_PROMPT: &str = "Тематический фокус: сообщение должно быть непосредственно связано с текущим временем суток. Свободно выбери конкретную мысль, сохраняя заданное намерение и характер Yalom.";
 
 #[derive(Debug, thiserror::Error)]
@@ -39,11 +37,6 @@ pub enum NudgeServiceError {
 pub enum NudgeSource {
     OpenAi,
     Curated,
-}
-
-pub enum NudgeMode {
-    OnDemand,
-    Schedule,
 }
 
 pub trait RandomRange {
@@ -80,18 +73,10 @@ where
     pub async fn generate<R: RandomRange>(
         &self,
         mut rng: R,
-        mode: NudgeMode,
         now: DateTime<Utc>,
         tz: Tz,
     ) -> Result<GeneratedNudge, NudgeServiceError> {
-        assert!(matches!(mode, NudgeMode::OnDemand));
-
         let now_tz = now.with_timezone(&tz);
-
-        let mode_prompt = match mode {
-            NudgeMode::OnDemand => ON_DEMAND_MODE_PROMPT,
-            NudgeMode::Schedule => unreachable!("will be implemented later"),
-        };
 
         let intent = match rng.random_range((0..100).into()) {
             0..30 => NudgeIntent::Observation,
@@ -103,31 +88,27 @@ where
         let time_focus = matches!(rng.random_range((0..100).into()), 0..50);
 
         let mut source = NudgeSource::OpenAi;
-        let text = match rng.random_range((0..100).into()) {
-            0..80 => {
-                self.open_ai_generate(tz, now_tz, mode_prompt, intent, time_focus)
-                    .await?
-            }
-            _ => {
-                let daytime = if time_focus {
-                    get_daytime(now_tz.hour())
-                } else {
-                    None
-                };
-                let curated_nudge = self
-                    .store
-                    .get_random_nudge(intent, daytime)
-                    .await
-                    .map_err(NudgeServiceError::StoreError)?;
+        let is_curated_source = rng.random_range((0..100).into()) < 20;
 
-                if let Some(nudge) = curated_nudge {
-                    source = NudgeSource::Curated;
-                    nudge
-                } else {
-                    self.open_ai_generate(tz, now_tz, mode_prompt, intent, time_focus)
-                        .await?
-                }
-            }
+        let curated_text = if is_curated_source {
+            source = NudgeSource::Curated;
+            let daytime = if time_focus {
+                get_daytime(now_tz.hour())
+            } else {
+                None
+            };
+            self.store
+                .get_random_nudge(intent, daytime)
+                .await
+                .map_err(NudgeServiceError::StoreError)?
+        } else {
+            None
+        };
+
+        let text = if let Some(curated_text_val) = curated_text {
+            curated_text_val
+        } else {
+            self.open_ai_generate(intent, now_tz, time_focus).await?
         };
 
         Ok(GeneratedNudge {
@@ -140,49 +121,44 @@ where
 
     async fn open_ai_generate(
         &self,
-        tz: Tz,
-        now_tz: DateTime<Tz>,
-        mode_prompt: &str,
         intent: NudgeIntent,
+        now_tz: DateTime<Tz>,
         time_focus: bool,
     ) -> Result<String, NudgeServiceError> {
-        let mut instructions = String::new();
-        let mut context = String::new();
-        instructions.push_str(IDENTITY_PROMPT);
-        instructions.push('\n');
-        instructions.push_str(EXAMPLES_PROMPT);
-        instructions.push('\n');
-        instructions.push_str(mode_prompt);
-        instructions.push('\n');
-        instructions.push_str(match intent {
-            NudgeIntent::Observation => OBSERVATION_INTENT_PROMPT,
-            NudgeIntent::Question => QUESTION_INTENT_PROMPT,
-            NudgeIntent::Invitation => INVITATION_INTENT_PROMPT,
-            NudgeIntent::Greeting => GREETING_INTENT_PROMPT,
-        });
-        instructions.push('\n');
-
-        context.push_str(TIME_FOCUS_PROMPT);
-        context.push('\n');
-        context.push_str("Current date and time:");
-        context.push_str(&now_tz.to_rfc3339_opts(SecondsFormat::Secs, true));
-        context.push('\n');
-        context.push_str("Timezone: ");
-        context.push_str(&tz.to_string());
-        if time_focus {
-            context.push_str(TIME_FOCUS_PROMPT);
-        };
+        let llm_request = build_llm_request(intent, now_tz, time_focus);
 
         let llm_resp = self
             .open_ai_adapter
-            .execute(LlmRequest {
-                instructions,
-                context,
-            })
+            .execute(llm_request)
             .await
             .map_err(OpenAiAdapterError)?;
 
         Ok(llm_resp.text)
+    }
+}
+
+fn build_llm_request(intent: NudgeIntent, now_tz: DateTime<Tz>, time_focus: bool) -> LlmRequest {
+    let instructions = [
+        IDENTITY_PROMPT,
+        EXAMPLES_PROMPT,
+        ON_DEMAND_MODE_PROMPT,
+        get_intent_prompt(intent),
+    ]
+    .join("\n");
+
+    let mut context = format!(
+        "Current date and time: {}\nTimezone: {}",
+        now_tz.to_rfc3339_opts(SecondsFormat::Secs, true),
+        now_tz.timezone(),
+    );
+    if time_focus {
+        context.push('\n');
+        context.push_str(TIME_FOCUS_PROMPT);
+    }
+
+    LlmRequest {
+        instructions,
+        context,
     }
 }
 
@@ -192,5 +168,14 @@ pub fn get_daytime(hour: u32) -> Option<NudgeDayTime> {
         12..=17 => Some(NudgeDayTime::Day),
         18..=23 => Some(NudgeDayTime::Evening),
         _ => None,
+    }
+}
+
+fn get_intent_prompt(intent: NudgeIntent) -> &'static str {
+    match intent {
+        NudgeIntent::Observation => OBSERVATION_INTENT_PROMPT,
+        NudgeIntent::Question => QUESTION_INTENT_PROMPT,
+        NudgeIntent::Invitation => INVITATION_INTENT_PROMPT,
+        NudgeIntent::Greeting => GREETING_INTENT_PROMPT,
     }
 }

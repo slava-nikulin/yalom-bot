@@ -32,7 +32,7 @@ impl NudgeStore for NudgeMySqlStore {
             SELECT text
             FROM curated_nudges
             WHERE intent = ?
-              AND daytime IN ('Any', ?)
+              AND daytime = ?
             ORDER BY RAND()
             LIMIT 1
             "#,

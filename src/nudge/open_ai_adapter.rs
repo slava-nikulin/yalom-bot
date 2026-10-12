@@ -67,7 +67,17 @@ impl LlmAdapter for OpenAiAdapter {
         }
 
         Ok(LlmResponse {
-            text: response.output_text().ok_or(AdapterError::EmptyResponse)?,
+            text: response
+                .output_text()
+                .and_then(|s| Some(s.trim().to_owned()))
+                .and_then(|trimmed| {
+                    if trimmed.is_empty() {
+                        None
+                    } else {
+                        Some(trimmed)
+                    }
+                })
+                .ok_or(AdapterError::EmptyResponse)?,
         })
     }
 }
