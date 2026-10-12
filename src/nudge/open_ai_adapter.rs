@@ -2,7 +2,7 @@ use async_openai::{
     Client,
     config::OpenAIConfig,
     error::OpenAIError,
-    types::responses::{CreateResponseArgs, ReasoningArgs, ReasoningEffort},
+    types::responses::{CreateResponseArgs, ReasoningArgs, ReasoningEffort, Status},
 };
 
 #[derive(thiserror::Error, Debug)]
@@ -11,7 +11,15 @@ pub enum AdapterError {
     OpenAi(#[from] OpenAIError),
 
     #[error("empty response")]
-    EmptyResponse(),
+    EmptyResponse,
+
+    #[error("not completed llm response")]
+    NotCompletedResponse,
+}
+
+pub struct LlmRequest {
+    pub instructions: String,
+    pub context: String,
 }
 
 pub struct LlmResponse {
@@ -21,7 +29,7 @@ pub struct LlmResponse {
 pub trait LlmAdapter {
     fn execute(
         &self,
-        instructions: String,
+        request: LlmRequest,
     ) -> impl std::future::Future<Output = Result<LlmResponse, AdapterError>> + Send;
 }
 
@@ -38,7 +46,7 @@ impl OpenAiAdapter {
 }
 
 impl LlmAdapter for OpenAiAdapter {
-    async fn execute(&self, instructions: String) -> Result<LlmResponse, AdapterError> {
+    async fn execute(&self, request: LlmRequest) -> Result<LlmResponse, AdapterError> {
         let request = CreateResponseArgs::default()
             .model("gpt-6-luna")
             .reasoning(
@@ -46,16 +54,20 @@ impl LlmAdapter for OpenAiAdapter {
                     .effort(ReasoningEffort::Medium)
                     .build()?,
             )
-            .instructions(instructions)
-            .max_output_tokens(1024u32)
+            .instructions(request.instructions)
+            .input(request.context)
+            .store(false)
+            .max_output_tokens(1500u32)
             .build()?;
 
         let response = self.client.responses().create(request).await?;
 
+        if response.status != Status::Completed {
+            return Err(AdapterError::NotCompletedResponse);
+        }
+
         Ok(LlmResponse {
-            text: response
-                .output_text()
-                .ok_or_else(AdapterError::EmptyResponse)?,
+            text: response.output_text().ok_or(AdapterError::EmptyResponse)?,
         })
     }
 }
