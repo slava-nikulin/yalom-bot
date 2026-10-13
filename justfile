@@ -23,8 +23,9 @@ dev-up:
     docker compose -f local/compose.yml up -d --build --wait
     just migrate
 
-dev-db-exec:
-    docker compose -f local/compose.yml exec db mysql -uroot -proot yalom
+# Start local MySQL if needed and open its interactive SQL console.
+dev-db-exec: db-up
+    docker compose -f local/compose.yml exec db sh -lc 'export MYSQL_PWD="$MYSQL_PASSWORD"; exec mysql -u "$MYSQL_USER" "$MYSQL_DATABASE"'
 
 dev-down:
     docker compose -f local/compose.yml down
@@ -96,7 +97,7 @@ k8s-check:
 # -------------------------------------------------------------------
 
 db-up:
-    docker compose -f local/compose.yml up -d db
+    docker compose -f local/compose.yml up -d --wait db
 
 db-down:
     docker compose -f local/compose.yml down
