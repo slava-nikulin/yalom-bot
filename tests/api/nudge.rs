@@ -107,16 +107,20 @@ async fn test_generate_nudge_success(db: MySqlPool) {
     // Дожидаемся обработки Telegram job.
     app.tg_update_job_wp.shutdown().await;
 
-    let tg_calls = app.tg_calls.lock().unwrap();
+    {
+        let tg_calls = app.tg_calls.lock().unwrap();
 
-    assert_eq!(tg_calls.len(), 1);
-    assert_eq!(tg_calls[0].chat_id, CHAT_ID.into());
-    assert_eq!(tg_calls[0].text, FAKE_NUDGE_TEXT);
+        assert_eq!(tg_calls.len(), 1);
+        assert_eq!(tg_calls[0].chat_id, CHAT_ID.into());
+        assert_eq!(tg_calls[0].text, FAKE_NUDGE_TEXT);
+    }
 
-    let llm_calls = app.llm_calls.lock().unwrap();
+    {
+        let llm_calls = app.llm_calls.lock().unwrap();
 
-    assert_eq!(llm_calls.len(), 1);
-    assert!(llm_calls[0].context.contains(&timezone));
+        assert_eq!(llm_calls.len(), 1);
+        assert!(llm_calls[0].context.contains(&timezone));
+    }
 
     let count: u32 = sqlx::query_scalar(
         "SELECT request_count FROM manual_nudge_rate_limits WHERE tg_user_id = ?",

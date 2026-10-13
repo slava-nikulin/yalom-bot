@@ -17,7 +17,7 @@ use tower_cookies::{
 };
 
 use crate::{
-    app_state::{SessionState, UserStoreState},
+    app_state::UserStoreState,
     http::miniapp::{
         dto::{ErrorBody, GenerateNudgeRequest, MenuState, NudgeResponse, UpdateMenuRequest},
         extractors::{SESSION_COOKIE_NAME, ValidatedInitData},
@@ -29,7 +29,7 @@ use crate::{
         rate_limit::{ManualNudgeMySqlLimiter, RateLimitDecision, RateLimitReason},
         store::NudgeStore,
     },
-    security::session::{SESSION_TTL_SECONDS, SessionError, SessionIdentity},
+    security::session::{SESSION_TTL_SECONDS, SessionError, SessionIdentity, Sessions},
     telegram::sender::{TgSenderJob, TgSenderService},
     user::store::{UserStore, UserStoreError},
 };
@@ -131,7 +131,7 @@ where
     Ns: NudgeStore,
     A: LlmAdapter,
     UserStoreState<Us>: FromRef<S>,
-    SessionState: FromRef<S>,
+    Arc<Sessions>: FromRef<S>,
     Arc<NudgeService<A, Ns>>: FromRef<S>,
     ManualNudgeMySqlLimiter: FromRef<S>,
     TgSenderService: FromRef<S>,
@@ -145,7 +145,7 @@ where
 }
 
 async fn issue_session(
-    State(SessionState(state)): State<SessionState>,
+    State(state): State<Arc<Sessions>>,
     ValidatedInitData(init_data): ValidatedInitData,
     cookies: Cookies,
 ) -> Result<StatusCode, MiniAppErr> {

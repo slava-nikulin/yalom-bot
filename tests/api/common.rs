@@ -5,7 +5,7 @@ use std::sync::{Arc, Mutex};
 
 use axum::Router;
 use yalom_bot::{
-    app_state::AppState,
+    app_state::{AppState, TgBotToken, TgWebhookSecret, UserStoreState},
     http::app_router,
     nudge::{
         NudgeService,
@@ -86,7 +86,7 @@ impl TestApp {
         let tg_calls = tg_bot_client.calls.clone();
 
         let (tg_update_service, tg_update_job_wp) =
-            TgSenderService::new(tg_bot_client.clone(), user_store.clone(), 1, 10);
+            TgSenderService::new(tg_bot_client, user_store.clone(), 1, 10);
 
         let llm_adapter = OpenAiFakeAdapter::default();
         let llm_calls = llm_adapter.calls.clone();
@@ -94,16 +94,15 @@ impl TestApp {
         let nudge_service = NudgeService::new(llm_adapter, NudgeMySqlStore::new(db.clone()));
         let nudge_limiter = ManualNudgeMySqlLimiter::new(db);
 
-        let app_state = AppState::new(
-            TG_TOKEN,
-            TG_WEBHOOK_SECRET_TOKEN,
-            Sessions::new(SESSION_KEY),
-            tg_bot_client,
-            user_store,
+        let app_state = AppState {
+            tg_bot_token: TgBotToken(Arc::from(TG_TOKEN)),
+            tg_webhook_secret: TgWebhookSecret(Arc::from(TG_WEBHOOK_SECRET_TOKEN)),
+            sessions: Arc::new(Sessions::new(SESSION_KEY)),
+            user_store: UserStoreState(user_store),
             tg_update_service,
-            nudge_service,
+            nudge_service: Arc::from(nudge_service),
             nudge_limiter,
-        );
+        };
 
         let router = app_router(app_state);
 

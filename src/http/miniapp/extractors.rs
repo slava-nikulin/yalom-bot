@@ -1,11 +1,13 @@
+use std::sync::Arc;
+
 use axum::extract::{FromRef, FromRequestParts};
 use rustigram_miniapp::{HmacValidateOpts, WebAppInitData, validate_hmac};
 use tower_cookies::Cookies;
 
 use crate::{
-    app_state::{SessionState, TgBotToken},
+    app_state::TgBotToken,
     http::miniapp::MiniAppErr,
-    security::session::{SESSION_TTL_SECONDS, SessionIdentity},
+    security::session::{SESSION_TTL_SECONDS, SessionIdentity, Sessions},
 };
 
 pub const SESSION_COOKIE_NAME: &str = "__Host-yalom-session";
@@ -48,7 +50,7 @@ where
 impl<S> FromRequestParts<S> for SessionIdentity
 where
     S: Send + Sync,
-    SessionState: FromRef<S>,
+    Arc<Sessions>: FromRef<S>,
 {
     type Rejection = MiniAppErr;
 
@@ -64,7 +66,7 @@ where
             .get(SESSION_COOKIE_NAME)
             .ok_or(MiniAppErr::MissingSession)?;
 
-        let SessionState(sessions) = SessionState::from_ref(state);
+        let sessions = Arc::<Sessions>::from_ref(state);
 
         let identity = sessions
             .validate(auth_token.value())
