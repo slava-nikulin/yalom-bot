@@ -36,79 +36,91 @@ use crate::{
 
 #[derive(Debug, thiserror::Error)]
 pub enum MiniAppErr {
-    #[error("failed to issue session token")]
+    #[error("internal_error")]
     SessionIssue(#[source] SessionError),
 
-    #[error("invalid session token")]
+    #[error("unauthorized")]
     InvalidSession(#[source] SessionError),
 
-    #[error("missing session token")]
+    #[error("unauthorized")]
     MissingSession,
 
-    #[error("missing Telegram user data")]
+    #[error("missing_user_data")]
     MissingUserData,
 
-    #[error("invalid initData")]
+    #[error("invalid_init_data")]
     InvalidInitData,
 
-    #[error("invalid timezone")]
-    InvalidTimezone,
-
-    #[error("user not found")]
+    #[error("user_not_found")]
     UserNotFound,
 
-    #[error("inappropriate time")]
+    #[error("invalid_timezone")]
+    InvalidTimezone,
+
+    #[error("inappropriate_time")]
     InappropriateTime,
 
-    #[error("rate limit error")]
+    #[error("rate_limited")]
     Cooldown(StdDuration),
 
-    #[error("daily rate limit error")]
+    #[error("daily_limit")]
     DailyLimit(StdDuration),
 
-    #[error("internal error")]
+    #[error("internal_error")]
     Internal,
 
-    #[error("service unavailable")]
+    #[error("service_unavailable")]
     Unavailable,
 }
 
 impl IntoResponse for MiniAppErr {
     fn into_response(self) -> Response {
-        match self {
-            MiniAppErr::SessionIssue(err) => {
-                tracing::error!(error = %err);
-                StatusCode::INTERNAL_SERVER_ERROR
-            }
-            MiniAppErr::InvalidSession(_) | MiniAppErr::MissingSession => StatusCode::UNAUTHORIZED,
-            MiniAppErr::MissingUserData | MiniAppErr::InvalidInitData => StatusCode::BAD_REQUEST,
-            MiniAppErr::InvalidTimezone => StatusCode::BAD_REQUEST,
-            MiniAppErr::UserNotFound => StatusCode::NOT_FOUND,
-            MiniAppErr::InappropriateTime => StatusCode::UNPROCESSABLE_ENTITY,
-            MiniAppErr::DailyLimit(duration) | MiniAppErr::Cooldown(duration) => {
-                let retry_after_seconds = duration.as_secs() + 1;
-
-                let mut response = (
-                    StatusCode::TOO_MANY_REQUESTS,
-                    Json(ErrorBody {
-                        retry_after_seconds: Some(retry_after_seconds),
-                        code: "rate_limited",
-                    }),
-                )
-                    .into_response();
-
-                response.headers_mut().insert(
-                    RETRY_AFTER,
-                    HeaderValue::from_str(&retry_after_seconds.to_string())
-                        .expect("valid retry-after"),
-                );
-
-                return response;
-            }
-            MiniAppErr::Internal => StatusCode::INTERNAL_SERVER_ERROR,
-            MiniAppErr::Unavailable => StatusCode::SERVICE_UNAVAILABLE,
+        if let Self::SessionIssue(err) = &self {
+            tracing::error!(error = %err, "failed to issue session");
         }
-        .into_response()
+
+        let status = match &self {
+            Self::SessionIssue(_) | Self::Internal => StatusCode::INTERNAL_SERVER_ERROR,
+
+            Self::InvalidSession(_) | Self::MissingSession => StatusCode::UNAUTHORIZED,
+
+            Self::MissingUserData | Self::InvalidInitData | Self::InvalidTimezone => {
+                StatusCode::BAD_REQUEST
+            }
+
+            Self::UserNotFound => StatusCode::NOT_FOUND,
+
+            Self::InappropriateTime => StatusCode::UNPROCESSABLE_ENTITY,
+
+            Self::Cooldown(_) | Self::DailyLimit(_) => StatusCode::TOO_MANY_REQUESTS,
+
+            Self::Unavailable => StatusCode::SERVICE_UNAVAILABLE,
+        };
+
+        let retry_after_seconds = match &self {
+            Self::Cooldown(duration) | Self::DailyLimit(duration) => {
+                Some(duration.as_secs() + u64::from(duration.subsec_nanos() > 0))
+            }
+            _ => None,
+        };
+
+        let mut response = (
+            status,
+            Json(ErrorBody {
+                code: self.to_string(),
+                retry_after_seconds,
+            }),
+        )
+            .into_response();
+
+        if let Some(seconds) = retry_after_seconds {
+            response.headers_mut().insert(
+                RETRY_AFTER,
+                HeaderValue::from_str(&seconds.to_string()).expect("valid retry-after"),
+            );
+        }
+
+        response
     }
 }
 

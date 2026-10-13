@@ -24,8 +24,11 @@ pub enum TgSenderJob {
     Nudge { chat_id: i64, text: String },
 }
 
-const WELCOME_MESSAGE: &str = "Welcome! Your account has been registered.";
-const ACTIVATING_MESSAGE: &str = "Your account has been activated.";
+const WELCOME_MESSAGE: &str = "Привет! Я Yalom.
+Буду делиться с тобой короткими мыслями, наблюдениями и вопросами. Иногда это будет просто обычное приветствие.
+Пока ты можешь попросить сообщение вручную через меню. А позже я смогу иногда писать первым.";
+const ACTIVATING_MESSAGE: &str = "Снова привет!
+Если ты раньше ставил сообщения на паузу, теперь она снята. А попросить сообщение прямо сейчас можно через меню.";
 
 #[derive(Clone)]
 pub struct TgSenderService {

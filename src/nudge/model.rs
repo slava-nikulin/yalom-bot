@@ -16,8 +16,8 @@ pub enum NudgeTimeError {
 }
 
 pub struct NudgeTime {
-    pub now: DateTime<Tz>,
-    pub daytime: NudgeDayTime,
+    pub(super) now: DateTime<Tz>,
+    pub(super) daytime: NudgeDayTime,
 }
 
 impl TryFrom<DateTime<Tz>> for NudgeTime {

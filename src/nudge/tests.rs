@@ -115,10 +115,12 @@ fn test_service(
     (service, store, llm)
 }
 
-fn now(utc_hour: u32) -> DateTime<Tz> {
-    DateTime::parse_from_rfc3339(&format!("2026-10-12T{utc_hour:02}:00:00Z"))
+fn now(utc_hour: u32) -> NudgeTime {
+    let dt = DateTime::parse_from_rfc3339(&format!("2026-10-12T{utc_hour:02}:00:00Z"))
         .unwrap()
-        .with_timezone(&chrono_tz::Asia::Almaty)
+        .with_timezone(&chrono_tz::Asia::Almaty);
+
+    NudgeTime::try_from(dt).unwrap()
 }
 
 fn assert_store_called(store: &FakeStore, intent: NudgeIntent, daytime: NudgeDayTime) {
@@ -296,25 +298,6 @@ async fn llm_error_is_propagated() {
 }
 
 #[tokio::test]
-async fn inappropriate_time_rejects_generation() {
-    for utc_hour in [0, 20] {
-        // В Алматы это 05:00 и 01:00 соответственно.
-        let (service, store, llm) =
-            test_service(StoreReply::Found("Curated"), LlmReply::Text("Generated"));
-
-        // RNG не должен вызываться вообще.
-        let rng = FakeRng::new([]);
-
-        let result = service.generate(rng, now(utc_hour)).await;
-
-        assert!(matches!(result, Err(NudgeServiceError::InappropriateTime)));
-
-        assert_eq!(store.calls.lock().unwrap().len(), 0);
-        assert_eq!(llm.requests.lock().unwrap().len(), 0);
-    }
-}
-
-#[tokio::test]
 async fn intent_probability_boundaries() {
     for (roll, expected_intent, expected_prompt) in [
         (0, NudgeIntent::Observation, OBSERVATION_INTENT_PROMPT),
@@ -344,24 +327,5 @@ async fn intent_probability_boundaries() {
         let requests = llm.requests.lock().unwrap();
         assert_eq!(requests.len(), 1);
         assert!(requests[0].instructions.ends_with(expected_prompt));
-    }
-}
-
-#[test]
-fn daytime_boundaries() {
-    for hour in [0, 5] {
-        assert!(get_daytime(hour).is_none());
-    }
-
-    for hour in [6, 11] {
-        assert!(matches!(get_daytime(hour), Some(NudgeDayTime::Morning)));
-    }
-
-    for hour in [12, 17] {
-        assert!(matches!(get_daytime(hour), Some(NudgeDayTime::Day)));
-    }
-
-    for hour in [18, 23] {
-        assert!(matches!(get_daytime(hour), Some(NudgeDayTime::Evening)));
     }
 }

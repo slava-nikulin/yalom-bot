@@ -22,7 +22,7 @@ pub struct GenerateNudgeRequest {
 
 #[derive(Serialize)]
 pub struct ErrorBody {
-    pub code: &'static str,
+    pub code: String,
 
     #[serde(skip_serializing_if = "Option::is_none")]
     pub retry_after_seconds: Option<u64>,
