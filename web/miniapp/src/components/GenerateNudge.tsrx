@@ -1,5 +1,5 @@
 import { useMutation } from '@tanstack/solid-query';
-import { createEffect, createMemo, createSignal, onCleanup } from 'solid-js';
+import { createEffect, createMemo, createSignal } from 'solid-js';
 
 import { ApiRequestError } from '../api/error';
 import { generateNudge } from '../api/nudge';
@@ -34,27 +34,31 @@ function errorMessage(error: unknown): string {
   }
 }
 
-export default function GenerateNudge() {
+export default function GenerateNudge() @{
   const [limit, setLimit] = createSignal<RateLimit | null>(null);
   const [now, setNow] = createSignal(Date.now());
 
-  // Derive the remaining time from a deadline, not a decremented counter.
-  createEffect(() => {
-    if (!limit()) return;
+  // Track the limit separately from the side effect (Solid 2 API).
+  // Use an absolute deadline so backgrounded WebViews don't skew the countdown.
+  createEffect(
+    () => limit(),
+    (currentLimit) => {
+      if (!currentLimit) return;
 
-    const tick = () => setNow(Date.now());
-    tick();
+      const tick = () => setNow(Date.now());
+      tick();
 
-    const interval = window.setInterval(tick, 1000);
-    window.addEventListener('focus', tick);
-    document.addEventListener('visibilitychange', tick);
+      const interval = window.setInterval(tick, 1000);
+      window.addEventListener('focus', tick);
+      document.addEventListener('visibilitychange', tick);
 
-    onCleanup(() => {
-      window.clearInterval(interval);
-      window.removeEventListener('focus', tick);
-      document.removeEventListener('visibilitychange', tick);
-    });
-  });
+      return () => {
+        window.clearInterval(interval);
+        window.removeEventListener('focus', tick);
+        document.removeEventListener('visibilitychange', tick);
+      };
+    },
+  );
 
   const remainingSeconds = createMemo(() => {
     const current = limit();
@@ -112,23 +116,21 @@ export default function GenerateNudge() {
     return 'Сообщение появится в чате с ботом';
   });
 
-  return (
-    <section aria-label="Ручная генерация сообщения">
-      <button
-        type="button"
-        disabled={mutation.isPending || remainingSeconds() > 0}
-        onClick={() => mutation.mutate()}
-        class="flex h-14 w-full items-center justify-center rounded-2xl bg-[var(--app-button)] px-5 text-base font-semibold text-[var(--app-button-text)] transition-opacity active:opacity-85 disabled:cursor-not-allowed disabled:opacity-50"
-      >
-        {buttonLabel()}
-      </button>
+  <section aria-label="Ручная генерация сообщения">
+    <button
+      type="button"
+      disabled={mutation.isPending || remainingSeconds() > 0}
+      onClick={() => mutation.mutate()}
+      class="flex h-14 w-full items-center justify-center rounded-2xl bg-[var(--app-button)] px-5 text-base font-semibold text-[var(--app-button-text)] transition-opacity active:opacity-85 disabled:cursor-not-allowed disabled:opacity-50"
+    >
+      {buttonLabel()}
+    </button>
 
-      <p
-        aria-live="polite"
-        class="mt-3 min-h-5 text-center text-sm leading-5 text-[var(--app-hint)]"
-      >
-        {note()}
-      </p>
-    </section>
-  );
+    <p
+      aria-live="polite"
+      class="mt-3 min-h-5 text-center text-sm leading-5 text-[var(--app-hint)]"
+    >
+      {note()}
+    </p>
+  </section>
 }

@@ -79,7 +79,10 @@ frontend-typecheck:
 frontend-build:
     cd web/miniapp && pnpm build
 
-frontend-check: frontend-lint frontend-typecheck frontend-build
+frontend-test:
+    cd web/miniapp && pnpm exec vitest run
+
+frontend-check: frontend-lint frontend-typecheck frontend-test frontend-build
 
 # -------------------------------------------------------------------
 # k8s
@@ -203,4 +206,4 @@ docker-check-all: docker-check docker-check-miniapp
 check: fmt clippy test k8s-check frontend-lint frontend-typecheck
 
 # Everything expected to succeed before merge/release.
-check-full: frontend-install check test frontend-build docker-check-all
+check-full: frontend-install check test frontend-test frontend-build docker-check-all

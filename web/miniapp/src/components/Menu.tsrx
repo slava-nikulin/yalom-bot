@@ -1,4 +1,4 @@
-import GenerateNudge from './GenerateNudge';
+import GenerateNudge from './GenerateNudge.tsrx';
 
 export default function Menu() @{
   <main class="
