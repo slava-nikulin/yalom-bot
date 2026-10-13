@@ -1,17 +1,16 @@
 pub mod dto;
 pub mod extractors;
 
-use std::sync::Arc;
-
 use axum::{
     Json, Router,
     extract::{FromRef, FromRequestParts, State},
-    http::StatusCode,
+    http::{HeaderValue, StatusCode, header::RETRY_AFTER},
     response::{IntoResponse, Response},
     routing::{get, post},
 };
 use chrono::Utc;
 use chrono_tz::Tz::{self};
+use std::{sync::Arc, time::Duration as StdDuration};
 use tower_cookies::{
     Cookie, Cookies,
     cookie::{SameSite, time::Duration},
@@ -20,20 +19,18 @@ use tower_cookies::{
 use crate::{
     app_state::{SessionState, UserStoreState},
     http::miniapp::{
-        dto::{GenerateNudgeRequest, MenuState, NudgeResponse, UpdateMenuRequest},
+        dto::{ErrorBody, GenerateNudgeRequest, MenuState, NudgeResponse, UpdateMenuRequest},
         extractors::{SESSION_COOKIE_NAME, ValidatedInitData},
     },
     nudge::{
-        DefaultRng, NudgeService, NudgeServiceError,
+        DefaultRng, NudgeService,
+        model::NudgeTime,
         open_ai_adapter::LlmAdapter,
-        rate_limit::{ManualNudgeMySqlLimiter, RateLimitDecision},
+        rate_limit::{ManualNudgeMySqlLimiter, RateLimitDecision, RateLimitReason},
         store::NudgeStore,
     },
     security::session::{SESSION_TTL_SECONDS, SessionError, SessionIdentity},
-    telegram::{
-        TelegramClient,
-        sender::{TgSenderJob, TgSenderService},
-    },
+    telegram::sender::{TgSenderJob, TgSenderService},
     user::store::{UserStore, UserStoreError},
 };
 
@@ -49,10 +46,31 @@ pub enum MiniAppErr {
     MissingSession,
 
     #[error("missing Telegram user data")]
-    MissingUser,
+    MissingUserData,
 
     #[error("invalid initData")]
     InvalidInitData,
+
+    #[error("invalid timezone")]
+    InvalidTimezone,
+
+    #[error("user not found")]
+    UserNotFound,
+
+    #[error("inappropriate time")]
+    InappropriateTime,
+
+    #[error("rate limit error")]
+    Cooldown(StdDuration),
+
+    #[error("daily rate limit error")]
+    DailyLimit(StdDuration),
+
+    #[error("internal error")]
+    Internal,
+
+    #[error("service unavailable")]
+    Unavailable,
 }
 
 impl IntoResponse for MiniAppErr {
@@ -63,7 +81,32 @@ impl IntoResponse for MiniAppErr {
                 StatusCode::INTERNAL_SERVER_ERROR
             }
             MiniAppErr::InvalidSession(_) | MiniAppErr::MissingSession => StatusCode::UNAUTHORIZED,
-            MiniAppErr::MissingUser | MiniAppErr::InvalidInitData => StatusCode::BAD_REQUEST,
+            MiniAppErr::MissingUserData | MiniAppErr::InvalidInitData => StatusCode::BAD_REQUEST,
+            MiniAppErr::InvalidTimezone => StatusCode::BAD_REQUEST,
+            MiniAppErr::UserNotFound => StatusCode::NOT_FOUND,
+            MiniAppErr::InappropriateTime => StatusCode::UNPROCESSABLE_ENTITY,
+            MiniAppErr::DailyLimit(duration) | MiniAppErr::Cooldown(duration) => {
+                let retry_after_seconds = duration.as_secs() + 1;
+
+                let mut response = (
+                    StatusCode::TOO_MANY_REQUESTS,
+                    Json(ErrorBody {
+                        retry_after_seconds: Some(retry_after_seconds),
+                        code: "rate_limited",
+                    }),
+                )
+                    .into_response();
+
+                response.headers_mut().insert(
+                    RETRY_AFTER,
+                    HeaderValue::from_str(&retry_after_seconds.to_string())
+                        .expect("valid retry-after"),
+                );
+
+                return response;
+            }
+            MiniAppErr::Internal => StatusCode::INTERNAL_SERVER_ERROR,
+            MiniAppErr::Unavailable => StatusCode::SERVICE_UNAVAILABLE,
         }
         .into_response()
     }
@@ -95,7 +138,7 @@ async fn issue_session(
     cookies: Cookies,
 ) -> Result<StatusCode, MiniAppErr> {
     let Some(tg_user) = init_data.user else {
-        return Err(MiniAppErr::MissingUser);
+        return Err(MiniAppErr::MissingUserData);
     };
     let token = state.issue(tg_user.id).map_err(MiniAppErr::SessionIssue)?;
 
@@ -168,7 +211,7 @@ async fn generate_nudge_manual<Us, A, Ns>(
     State(limiter): State<ManualNudgeMySqlLimiter>,
     State(tg_service): State<TgSenderService>,
     Json(request): Json<GenerateNudgeRequest>,
-) -> Result<Json<NudgeResponse>, StatusCode>
+) -> Result<Json<NudgeResponse>, MiniAppErr>
 where
     Us: UserStore,
     A: LlmAdapter,
@@ -178,17 +221,20 @@ where
         .get(identity.tg_user_id)
         .await
         .map_err(|err| match err {
-            UserStoreError::Database(_) => {
-                tracing::error!(error = %err, "failed to load user");
-                StatusCode::INTERNAL_SERVER_ERROR
+            UserStoreError::NotFound => MiniAppErr::UserNotFound,
+            other => {
+                tracing::error!(error = ?other, "failed to load user");
+                MiniAppErr::Internal
             }
-            UserStoreError::NotFound => StatusCode::NOT_FOUND,
         })?;
 
     let tz: Tz = request
         .timezone
         .parse()
-        .map_err(|_| StatusCode::BAD_REQUEST)?;
+        .map_err(|_| MiniAppErr::InvalidTimezone)?;
+
+    let nudge_time = NudgeTime::try_from(Utc::now().with_timezone(&tz))
+        .map_err(|_| MiniAppErr::InappropriateTime)?;
 
     match limiter.acquire(identity.tg_user_id).await {
         Ok(RateLimitDecision::Allowed) => {}
@@ -197,48 +243,52 @@ where
             reason,
             retry_after,
         }) => {
-            // Преобразуем в HTTP 429 + Retry-After.
-            // Reason определяет машинный код ошибки для MiniApp.
+            return Err(match reason {
+                RateLimitReason::Cooldown => MiniAppErr::Cooldown(retry_after),
+
+                RateLimitReason::DailyQuota => MiniAppErr::DailyLimit(retry_after),
+            });
         }
 
         Err(err) => {
-            tracing::error!(error = %err, "rate limit database error");
-            // HTTP 503 Service Unavailable
+            tracing::error!(
+                error = %err,
+                tg_user_id = identity.tg_user_id,
+                "rate limiter failed"
+            );
+
+            return Err(MiniAppErr::Internal);
         }
     }
 
-    let now = Utc::now().with_timezone(&tz);
     let nudge = nudge_service
-        .generate(DefaultRng, now)
+        .generate(DefaultRng, nudge_time)
         .await
-        .map_err(|err| match err {
-            NudgeServiceError::InappropriateTime => StatusCode::UNPROCESSABLE_ENTITY,
-            other => {
-                tracing::error!(
-                    error = %other,
-                    tg_user_id = identity.tg_user_id,
-                    "failed to generate the nudge"
-                );
-                StatusCode::INTERNAL_SERVER_ERROR
-            }
+        .map_err(|err| {
+            tracing::error!(
+                error = ?err,
+                tg_user_id = identity.tg_user_id,
+                "failed to generate nudge"
+            );
+
+            MiniAppErr::Internal
         })?;
 
-    let tg_send_job = TgSenderJob::Message {
-        chat_id: user.chat_id,
-        text: nudge.text.clone(),
-    };
+    tg_service
+        .enqueue(TgSenderJob::Nudge {
+            chat_id: user.chat_id,
+            text: nudge.text.clone(),
+        })
+        .await
+        .map_err(|err| {
+            tracing::error!(
+                error = %err,
+                tg_user_id = identity.tg_user_id,
+                "failed to enqueue nudge"
+            );
 
-    if let Err(err) = tg_service.enqueue(tg_send_job).await {
-        tracing::error!(
-            error = %err,
-            chat_id = %user.chat_id,
-            "failed to enqueue telegram update"
-        );
-
-        Err(StatusCode::SERVICE_UNAVAILABLE)
-    } else {
-        Ok(StatusCode::OK)
-    }
+            MiniAppErr::Unavailable
+        })?;
 
     Ok(Json(NudgeResponse { text: nudge.text }))
 }

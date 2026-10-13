@@ -5,7 +5,7 @@ use chrono_tz::Tz;
 
 use crate::nudge::{
     NudgeServiceError::OpenAiAdapterError,
-    model::{NudgeDayTime, NudgeIntent},
+    model::{NudgeDayTime, NudgeIntent, NudgeTime},
     open_ai_adapter::{AdapterError, LlmAdapter, LlmRequest},
     store::NudgeStore,
 };
@@ -28,9 +28,6 @@ const TIME_FOCUS_PROMPT: &str = "Тематический фокус: сообщ
 
 #[derive(Debug, thiserror::Error)]
 pub enum NudgeServiceError {
-    #[error("Inappropriate time")]
-    InappropriateTime,
-
     #[error("openAI adapter error")]
     OpenAiAdapterError(#[source] AdapterError),
 
@@ -85,14 +82,11 @@ where
     pub async fn generate<R: RandomRange>(
         &self,
         mut rng: R,
-        now: DateTime<Tz>,
+        nudge_time: NudgeTime,
     ) -> Result<GeneratedNudge, NudgeServiceError> {
-        let current_daytime =
-            get_daytime(now.hour()).ok_or(NudgeServiceError::InappropriateTime)?;
-
         let time_focus = chance(&mut rng, 50);
         let daytime = if time_focus {
-            current_daytime
+            nudge_time.daytime
         } else {
             NudgeDayTime::Any
         };
@@ -110,7 +104,8 @@ where
         let (text, source) = match curated {
             Some(text) => (text, NudgeSource::Curated),
             None => (
-                self.open_ai_generate(intent, now, time_focus).await?,
+                self.open_ai_generate(intent, nudge_time.now, time_focus)
+                    .await?,
                 NudgeSource::OpenAi,
             ),
         };
@@ -163,15 +158,6 @@ fn build_llm_request(intent: NudgeIntent, now: DateTime<Tz>, time_focus: bool) -
     LlmRequest {
         instructions,
         context,
-    }
-}
-
-pub fn get_daytime(hour: u32) -> Option<NudgeDayTime> {
-    match hour {
-        6..=11 => Some(NudgeDayTime::Morning),
-        12..=17 => Some(NudgeDayTime::Day),
-        18..=23 => Some(NudgeDayTime::Evening),
-        _ => None,
     }
 }
 

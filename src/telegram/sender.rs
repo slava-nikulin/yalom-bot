@@ -21,6 +21,7 @@ pub enum TgUpdateServiceError {
 pub enum TgSenderJob {
     Start { tg_user_id: i64, chat_id: i64 },
     Message { chat_id: i64, text: String },
+    Nudge { chat_id: i64, text: String },
 }
 
 const WELCOME_MESSAGE: &str = "Welcome! Your account has been registered.";
@@ -87,6 +88,7 @@ where
             )
         }
         TgSenderJob::Message { chat_id, text } => (format!("You said: {}", text), chat_id),
+        TgSenderJob::Nudge { chat_id, text } => (text, chat_id),
     };
 
     tg_client.send_message(chat_id.into(), msg).await?;
