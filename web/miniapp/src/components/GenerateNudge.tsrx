@@ -35,8 +35,8 @@ function errorMessage(error: unknown): string {
 }
 
 export default function GenerateNudge() @{
-  const [limit, setLimit] = createSignal<RateLimit | null>(null);
-  const [now, setNow] = createSignal(Date.now());
+  const [limit, setLimit] = createSignal<RateLimit | null>(null, { name: 'GenerateNudge.limit' });
+  const [now, setNow] = createSignal(Date.now(), { name: 'GenerateNudge.now' });
 
   // Track the limit separately from the side effect (Solid 2 API).
   // Use an absolute deadline so backgrounded WebViews don't skew the countdown.
@@ -58,6 +58,7 @@ export default function GenerateNudge() @{
         document.removeEventListener('visibilitychange', tick);
       };
     },
+    { name: 'GenerateNudge.countdownEffect' },
   );
 
   const remainingSeconds = createMemo(() => {
@@ -65,7 +66,7 @@ export default function GenerateNudge() @{
     if (!current) return 0;
 
     return Math.max(0, Math.ceil((current.until - now()) / 1000));
-  });
+  }, { name: 'GenerateNudge.remainingSeconds' });
 
   const mutation = useMutation(() => ({
     mutationFn: generateNudge,
@@ -91,7 +92,7 @@ export default function GenerateNudge() @{
     const seconds = remainingSeconds();
     if (seconds > 0) return `Через ${formatWait(seconds)}`;
     return mutation.isPending ? 'Генерирую…' : 'Получить сообщение';
-  });
+  }, { name: 'GenerateNudge.buttonLabel' });
 
   const note = createMemo(() => {
     if (remainingSeconds() > 0) {
@@ -114,7 +115,7 @@ export default function GenerateNudge() @{
     }
 
     return 'Сообщение появится в чате с ботом';
-  });
+  }, { name: 'GenerateNudge.note' });
 
   <section aria-label="Ручная генерация сообщения">
     <button
