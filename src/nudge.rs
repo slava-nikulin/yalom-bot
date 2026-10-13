@@ -1,6 +1,6 @@
 use std::range::Range;
 
-use chrono::{DateTime, SecondsFormat, Timelike};
+use chrono::{DateTime, SecondsFormat};
 use chrono_tz::Tz;
 
 use crate::nudge::{

@@ -8,9 +8,7 @@ use yalom_bot::{
     config::AppConfig,
     http::app_router,
     nudge::{
-        NudgeService,
-        open_ai_adapter::{self, OpenAiAdapter},
-        rate_limit::ManualNudgeMySqlLimiter,
+        NudgeService, open_ai_adapter::OpenAiAdapter, rate_limit::ManualNudgeMySqlLimiter,
         store::NudgeMySqlStore,
     },
     security::session::Sessions,

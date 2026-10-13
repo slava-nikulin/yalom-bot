@@ -26,7 +26,10 @@ pub const TG_WEBHOOK_SECRET_TOKEN: &str = "tg_webhook_secret_token";
 pub const TG_TOKEN: &str = "123456789:ABCdefGhIJKlmNoPQRsTUVwxYZ";
 pub const SESSION_KEY: &str = "miniapp_session_key";
 
-pub struct TgCall {}
+pub struct TgCall {
+    pub chat_id: rustigram_types::user::ChatId,
+    pub text: String,
+}
 
 #[derive(Clone)]
 pub struct TestBotClient {
@@ -44,21 +47,28 @@ impl TestBotClient {
 impl TelegramClient for TestBotClient {
     async fn send_message(
         &self,
-        _chat_id: rustigram_types::user::ChatId,
-        _text: String,
+        chat_id: rustigram_types::user::ChatId,
+        text: String,
     ) -> anyhow::Result<()> {
-        self.calls.lock().unwrap().push(TgCall {});
-
+        self.calls.lock().unwrap().push(TgCall { chat_id, text });
         Ok(())
     }
 }
 
+pub const FAKE_NUDGE_TEXT: &str = "Тестовое сообщение Yalom";
+
 #[derive(Default)]
-pub struct OpenAiFakeAdapter {}
+pub struct OpenAiFakeAdapter {
+    pub calls: Arc<Mutex<Vec<LlmRequest>>>,
+}
 
 impl LlmAdapter for OpenAiFakeAdapter {
     async fn execute(&self, request: LlmRequest) -> Result<LlmResponse, AdapterError> {
-        todo!()
+        self.calls.lock().unwrap().push(request);
+
+        Ok(LlmResponse {
+            text: FAKE_NUDGE_TEXT.to_owned(),
+        })
     }
 }
 
@@ -66,6 +76,7 @@ pub struct TestApp {
     pub router: Router,
     pub tg_calls: Arc<Mutex<Vec<TgCall>>>,
     pub tg_update_job_wp: WorkerPool<TgSenderJob>,
+    pub llm_calls: Arc<Mutex<Vec<LlmRequest>>>,
 }
 
 impl TestApp {
@@ -77,10 +88,10 @@ impl TestApp {
         let (tg_update_service, tg_update_job_wp) =
             TgSenderService::new(tg_bot_client.clone(), user_store.clone(), 1, 10);
 
-        let nudge_service = NudgeService::new(
-            OpenAiFakeAdapter::default(),
-            NudgeMySqlStore::new(db.clone()),
-        );
+        let llm_adapter = OpenAiFakeAdapter::default();
+        let llm_calls = llm_adapter.calls.clone();
+
+        let nudge_service = NudgeService::new(llm_adapter, NudgeMySqlStore::new(db.clone()));
         let nudge_limiter = ManualNudgeMySqlLimiter::new(db);
 
         let app_state = AppState::new(
@@ -99,6 +110,7 @@ impl TestApp {
         Ok(Self {
             router,
             tg_calls,
+            llm_calls,
             tg_update_job_wp,
         })
     }
