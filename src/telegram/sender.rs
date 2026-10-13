@@ -18,31 +18,35 @@ pub enum TgUpdateServiceError {
 }
 
 #[derive(Debug)]
-pub enum TgUpdateJob {
+pub enum TgSenderJob {
     Start { tg_user_id: i64, chat_id: i64 },
     Message { chat_id: i64, text: String },
+    Nudge { chat_id: i64, text: String },
 }
 
-const WELCOME_MESSAGE: &str = "Welcome! Your account has been registered.";
-const ACTIVATING_MESSAGE: &str = "Your account has been activated.";
+const WELCOME_MESSAGE: &str = "Привет! Я Yalom.
+Буду делиться с тобой короткими мыслями, наблюдениями и вопросами. Иногда это будет просто обычное приветствие.
+Пока ты можешь попросить сообщение вручную через меню. А позже я смогу иногда писать первым.";
+const ACTIVATING_MESSAGE: &str = "Снова привет!
+Если ты раньше ставил сообщения на паузу, теперь она снята. А попросить сообщение прямо сейчас можно через меню.";
 
 #[derive(Clone)]
-pub struct TgUpdateService {
-    sender: Sender<TgUpdateJob>,
+pub struct TgSenderService {
+    sender: Sender<TgSenderJob>,
 }
 
-impl TgUpdateService {
+impl TgSenderService {
     pub fn new<Tg, Us>(
         tg_client: Tg,
         user_store: Us,
         worker_count: usize,
         timeout: u64,
-    ) -> (Self, WorkerPool<TgUpdateJob>)
+    ) -> (Self, WorkerPool<TgSenderJob>)
     where
         Tg: TelegramClient,
         Us: UserStore,
     {
-        let pool: WorkerPool<TgUpdateJob> =
+        let pool: WorkerPool<TgSenderJob> =
             WorkerPool::new(worker_count, Duration::from_secs(timeout), move |update| {
                 process_job(update, tg_client.clone(), user_store.clone())
             });
@@ -55,7 +59,7 @@ impl TgUpdateService {
         )
     }
 
-    pub async fn enqueue(&self, update_job: TgUpdateJob) -> Result<(), TgUpdateServiceError> {
+    pub async fn enqueue(&self, update_job: TgSenderJob) -> Result<(), TgUpdateServiceError> {
         self.sender
             .send(update_job)
             .await
@@ -64,7 +68,7 @@ impl TgUpdateService {
 }
 
 async fn process_job<Tg, Us>(
-    update_job: TgUpdateJob,
+    update_job: TgSenderJob,
     tg_client: Tg,
     user_store: Us,
 ) -> anyhow::Result<()>
@@ -73,7 +77,7 @@ where
     Us: UserStore,
 {
     let (msg, chat_id) = match update_job {
-        TgUpdateJob::Start {
+        TgSenderJob::Start {
             tg_user_id,
             chat_id,
         } => {
@@ -86,7 +90,8 @@ where
                 chat_id,
             )
         }
-        TgUpdateJob::Message { chat_id, text } => (format!("You said: {}", text), chat_id),
+        TgSenderJob::Message { chat_id, text } => (format!("You said: {}", text), chat_id),
+        TgSenderJob::Nudge { chat_id, text } => (text, chat_id),
     };
 
     tg_client.send_message(chat_id.into(), msg).await?;
@@ -182,10 +187,10 @@ mod test {
         let user_store = TestUserStore::new();
         let store_calls = user_store.calls.clone();
 
-        let (service, wp) = TgUpdateService::new(tg_bot_client, user_store, 1, 1);
+        let (service, wp) = TgSenderService::new(tg_bot_client, user_store, 1, 1);
 
         service
-            .enqueue(TgUpdateJob::Start {
+            .enqueue(TgSenderJob::Start {
                 tg_user_id: 1,
                 chat_id: 2,
             })

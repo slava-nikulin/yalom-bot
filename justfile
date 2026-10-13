@@ -23,8 +23,9 @@ dev-up:
     docker compose -f local/compose.yml up -d --build --wait
     just migrate
 
-dev-db-exec:
-    docker compose -f local/compose.yml exec db mysql -uroot -proot yalom
+# Start local MySQL if needed and open its interactive SQL console.
+dev-db-exec: db-up
+    docker compose -f local/compose.yml exec db sh -lc 'export MYSQL_PWD="$MYSQL_PASSWORD"; exec mysql -u "$MYSQL_USER" "$MYSQL_DATABASE"'
 
 dev-down:
     docker compose -f local/compose.yml down
@@ -79,7 +80,10 @@ frontend-typecheck:
 frontend-build:
     cd web/miniapp && pnpm build
 
-frontend-check: frontend-lint frontend-typecheck frontend-build
+frontend-test:
+    cd web/miniapp && pnpm exec vitest run
+
+frontend-check: frontend-lint frontend-typecheck frontend-test frontend-build
 
 # -------------------------------------------------------------------
 # k8s
@@ -93,7 +97,7 @@ k8s-check:
 # -------------------------------------------------------------------
 
 db-up:
-    docker compose -f local/compose.yml up -d db
+    docker compose -f local/compose.yml up -d --wait db
 
 db-down:
     docker compose -f local/compose.yml down
@@ -203,4 +207,4 @@ docker-check-all: docker-check docker-check-miniapp
 check: fmt clippy test k8s-check frontend-lint frontend-typecheck
 
 # Everything expected to succeed before merge/release.
-check-full: frontend-install check test frontend-build docker-check-all
+check-full: frontend-install check test frontend-test frontend-build docker-check-all

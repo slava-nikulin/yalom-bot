@@ -21,3 +21,9 @@ Use these whenever you are debugging reactivity (something doesn't update, updat
   - `{"method":"costs"}` — running cost tables for the open session
 
 Name your signals/memos/effects (the `{ name: "..." }` option) — attribution reports scopes by name.
+
+## Solid 2 and TSRX compatibility
+
+- Solid 2's `createEffect(track, effect)` has **two** callbacks. Do not use the Solid 1 single-callback signature; it throws at runtime in the pinned RC. The second callback may return a disposer to clean up intervals and event listeners.
+- Prefer `.tsrx` for new UI components alongside `Menu.tsrx`. Existing `.tsx` shells and interoperability are supported; avoid mechanical rewrites.
+- When adding a component with effects, cover *mounting it* in a jsdom test, not only isolated helper functions. Run `pnpm typecheck`, `pnpm exec vitest run` and `pnpm build` before merging.

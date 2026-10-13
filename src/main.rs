@@ -4,13 +4,21 @@ use std::{net::SocketAddr, sync::Arc};
 use tokio::signal::unix::{SignalKind, signal};
 use tracing_subscriber::EnvFilter;
 use yalom_bot::{
-    app_state::AppState, config::Config, http::app_router, security::session::Sessions,
-    telegram::update_service::TgUpdateService, user::store::MySqlUserStore,
+    app_state::{AppState, TgBotToken, TgWebhookSecret, UserStoreState},
+    config::AppConfig,
+    http::app_router,
+    nudge::{
+        NudgeService, open_ai_adapter::OpenAiAdapter, rate_limit::ManualNudgeMySqlLimiter,
+        store::NudgeMySqlStore,
+    },
+    security::session::Sessions,
+    telegram::sender::TgSenderService,
+    user::store::MySqlUserStore,
 };
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    let cfg = Arc::new(Config::load()?);
+    let cfg = Arc::new(AppConfig::load()?);
     let filter =
         EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("warn,yalom_bot=info"));
 
@@ -21,26 +29,33 @@ async fn main() -> anyhow::Result<()> {
         .with_env_filter(filter)
         .init();
 
-    let tg_webhook_secret_token = &cfg.telegram.webhook.secret_token;
-
     let tg_bot = BotClient::from_token(&cfg.telegram.token)?;
 
-    let db_url = std::env::var("DATABASE_URL")?;
-    let db = MySqlPoolOptions::new().connect(db_url.as_str()).await?;
-    let user_store = MySqlUserStore::new(db);
-    let sessions = Sessions::new(&cfg.telegram.miniapp.session_key);
+    let db = MySqlPoolOptions::new().connect(&cfg.database.url).await?;
+    let user_store = MySqlUserStore::new(db.clone());
+    let nudge_store = NudgeMySqlStore::new(db.clone());
+    let nudge_limiter = ManualNudgeMySqlLimiter::new(db);
+
+    let open_ai_adapter = OpenAiAdapter::new(cfg.openai.api_key.clone());
+    let sessions = Sessions::new(&cfg.telegram.miniapp_session_key);
 
     let (tg_update_service, telegram_update_pool) =
-        TgUpdateService::new(tg_bot.clone(), user_store.clone(), 2, 10);
+        TgSenderService::new(tg_bot, user_store.clone(), 2, 10);
 
-    let app_state = AppState::new(
-        &cfg.telegram.token,
-        tg_webhook_secret_token.as_str(),
-        sessions,
-        tg_bot,
-        user_store,
+    let nudge_service = NudgeService::new(open_ai_adapter, nudge_store);
+
+    let app_state = AppState {
+        sessions: Arc::new(sessions),
+        user_store: UserStoreState(user_store),
+
+        tg_bot_token: TgBotToken(Arc::from(cfg.telegram.token.as_str())),
+        tg_webhook_secret: TgWebhookSecret(Arc::from(cfg.telegram.webhook_secret.as_str())),
+
         tg_update_service,
-    );
+        nudge_service: Arc::new(nudge_service),
+        nudge_limiter,
+    };
+
     let app_router = app_router(app_state);
 
     let mut sigterm = signal(SignalKind::terminate())?;

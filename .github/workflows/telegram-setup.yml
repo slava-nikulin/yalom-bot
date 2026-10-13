@@ -50,14 +50,12 @@ jobs:
             get_secret yalom-bot-telegram-token
           )"
 
-          export YALOM_TELEGRAM__WEBHOOK__SECRET_TOKEN="$(
+          export YALOM_TELEGRAM__WEBHOOK_SECRET="$(
             get_secret yalom-bot-webhook-secret-token
           )"
 
-          export YALOM_TELEGRAM__MINIAPP__SESSION_KEY=unused-by-telegram-admin
-
           echo "::add-mask::${YALOM_TELEGRAM__TOKEN}"
-          echo "::add-mask::${YALOM_TELEGRAM__WEBHOOK__SECRET_TOKEN}"
+          echo "::add-mask::${YALOM_TELEGRAM__WEBHOOK_SECRET}"
 
           cargo run \
             --locked \

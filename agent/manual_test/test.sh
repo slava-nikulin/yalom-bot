@@ -1,0 +1,272 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+PROMPTS_DIR="$DIR/../prompts"
+
+MODEL="gpt-6-luna"
+EFFORT="low"
+TIMEZONE="Europe/Moscow"
+TIME_OVERRIDE=""
+NO_TIME=false
+TIME_FOCUS=false
+CURATED=false
+INTENT="free"
+COUNT=1
+CONTEXT=""
+RAW=false
+DRY_RUN=false
+
+usage() {
+  cat <<'EOF'
+Usage: ./agent/manual_test/test.sh [options]
+
+Options:
+      --model MODEL     OpenAI model ID
+  -e, --effort EFFORT   default | none | low | medium | high | xhigh | max
+  -z, --tz TIMEZONE     IANA timezone
+      --time HH:MM      Override local time of day (e.g. 08:00)
+      --no-time         Omit date and timezone context
+      --intent INTENT   free | observation | question | invitation | greeting
+      --time-focus      Relate the message to local time of day
+      --curated         Pick from manual_test/corpus.json; fall back to LLM
+  -n, --count N         Number of generations (repeats are possible)
+      --context TEXT    Additional user context
+      --raw             Print complete API response
+      --dry-run         Print request JSON without calling API
+  -h, --help            Show this help
+EOF
+}
+
+while (($#)); do
+  case "$1" in
+    --model) MODEL="${2:?Missing model}"; shift 2 ;;
+    -e|--effort) EFFORT="${2:?Missing effort}"; shift 2 ;;
+    -z|--tz) TIMEZONE="${2:?Missing timezone}"; shift 2 ;;
+    --time) TIME_OVERRIDE="${2:?Missing time}"; shift 2 ;;
+    --no-time) NO_TIME=true; shift ;;
+    --time-focus) TIME_FOCUS=true; shift ;;
+    --curated) CURATED=true; shift ;;
+    --intent) INTENT="${2:?Missing intent}"; shift 2 ;;
+    -n|--count) COUNT="${2:?Missing count}"; shift 2 ;;
+    --context) CONTEXT="${2:?Missing context}"; shift 2 ;;
+    --raw) RAW=true; shift ;;
+    --dry-run) DRY_RUN=true; shift ;;
+    -h|--help) usage; exit 0 ;;
+    *) echo "Unknown argument: $1" >&2; usage; exit 1 ;;
+  esac
+done
+
+case "$EFFORT" in
+  default|none|low|medium|high|xhigh|max) ;;
+  *) echo "Invalid effort: $EFFORT" >&2; exit 1 ;;
+esac
+
+case "$INTENT" in
+  free|observation|question|invitation|greeting) ;;
+  *) echo "Invalid intent: $INTENT" >&2; exit 1 ;;
+esac
+
+if "$CURATED" && [[ "$INTENT" == "free" ]]; then
+  echo "--curated requires a specific --intent" >&2
+  exit 1
+fi
+
+[[ "$COUNT" =~ ^[1-9][0-9]*$ ]] || {
+  echo "Count must be a positive integer" >&2
+  exit 1
+}
+
+for cmd in curl jq date; do
+  command -v "$cmd" >/dev/null || {
+    echo "Missing dependency: $cmd" >&2
+    exit 1
+  }
+done
+
+[[ -f "/usr/share/zoneinfo/$TIMEZONE" ]] || {
+  echo "Unknown timezone: $TIMEZONE" >&2
+  exit 1
+}
+
+if [[ -n "$TIME_OVERRIDE" ]] && ! [[ "$TIME_OVERRIDE" =~ ^([01][0-9]|2[0-3]):[0-5][0-9]$ ]]; then
+  echo "Invalid time: expected HH:MM (00:00–23:59)" >&2
+  exit 1
+fi
+
+if "$NO_TIME" && [[ -n "$TIME_OVERRIDE" ]]; then
+  echo "--no-time and --time cannot be used together" >&2
+  exit 1
+fi
+
+if "$TIME_FOCUS" && "$NO_TIME"; then
+  echo "--time-focus cannot be combined with --no-time" >&2
+  exit 1
+fi
+
+INSTRUCTIONS=$(
+  cat "$PROMPTS_DIR/identity.md"
+  printf '\n\n'
+  cat "$PROMPTS_DIR/examples.md"
+  printf '\n\n'
+  cat "$PROMPTS_DIR/message.md"
+  if [[ "$INTENT" != "free" ]]; then
+    printf '\n\n'
+    cat "$PROMPTS_DIR/intents/$INTENT.md"
+  fi
+)
+
+DAYPART="unknown"
+
+if "$NO_TIME"; then
+  USER_CONTEXT="Время суток неизвестно. Не привязывай сообщение к определённому времени суток."
+  if [[ -n "$CONTEXT" ]]; then
+    USER_CONTEXT+=$'\n'"$CONTEXT"
+  fi
+else
+  if [[ -n "$TIME_OVERRIDE" ]]; then
+    TODAY=$(TZ="$TIMEZONE" date '+%Y-%m-%d')
+    NOW=$(TZ="$TIMEZONE" date -d "$TODAY $TIME_OVERRIDE" '+%Y-%m-%dT%H:%M:%S%:z')
+  else
+    NOW=$(TZ="$TIMEZONE" date '+%Y-%m-%dT%H:%M:%S%:z')
+  fi
+
+  USER_CONTEXT=$(printf \
+    'Timezone: %s\nCurrent local datetime: %s\n%s' \
+    "$TIMEZONE" "$NOW" "$CONTEXT")
+
+  HOUR=$((10#${NOW:11:2}))
+  if (( HOUR >= 5 && HOUR < 12 )); then
+    DAYPART="morning"
+  elif (( HOUR < 17 )); then
+    DAYPART="afternoon"
+  elif (( HOUR < 22 )); then
+    DAYPART="evening"
+  else
+    DAYPART="night"
+  fi
+fi
+
+if "$TIME_FOCUS"; then
+  USER_CONTEXT+=$'\n'"Тематический фокус: сообщение должно быть непосредственно связано с текущим временем суток. Свободно выбери конкретную мысль, сохраняя заданное намерение и характер Yalom."
+fi
+
+REQUEST=$(mktemp)
+RESPONSE=$(mktemp)
+trap 'rm -f "$REQUEST" "$RESPONSE"' EXIT
+
+# Independent test requests: no history or deduplication.
+build_request() {
+  jq \
+    --arg model "$MODEL" \
+    --arg effort "$EFFORT" \
+    --arg instructions "$INSTRUCTIONS" \
+    --arg context "$1" \
+    '
+    .model = $model
+    | .instructions = $instructions
+    | .input[0].content = $context
+    | if $effort == "default"
+        then del(.reasoning)
+        else .reasoning = {"effort": $effort}
+      end
+    ' "$DIR/request.json" > "$REQUEST"
+}
+
+build_request "$USER_CONTEXT"
+
+# For an LLM dry run, print the request JSON.
+if "$DRY_RUN" && ! "$CURATED"; then
+  cat "$REQUEST"
+  exit 0
+fi
+
+for ((i = 1; i <= COUNT; i++)); do
+  printf '\n--- %s | %s | %s | %d/%d ---\n' \
+    "$INTENT" "$MODEL" "$EFFORT" "$i" "$COUNT"
+
+  SOURCE="llm"
+  if "$CURATED"; then
+    TEXT=$(jq -r \
+      --arg intent "$INTENT" \
+      --arg daypart "$DAYPART" \
+      --argjson focus "$TIME_FOCUS" \
+      --argjson random "$RANDOM" \
+      '[ .[$intent][]? | select(
+          .time_of_day == $daypart
+          or (($focus | not) and .time_of_day == "any")
+        ) | .text ]
+       | if length == 0 then "" else .[$random % length] end' \
+      "$DIR/corpus.json")
+
+    if [[ -n "$TEXT" ]]; then
+      printf 'Source: curated\n%s\n' "$TEXT"
+      continue
+    fi
+    SOURCE="llm (curated fallback)"
+  fi
+
+  printf 'Source: %s\n' "$SOURCE"
+
+  if "$DRY_RUN"; then
+    cat "$REQUEST"
+    continue
+  fi
+
+  # No API key is needed unless the LLM is actually called.
+  if [[ -z "${OPENAI_API_KEY:-}" ]]; then
+    read -r -s -p "OpenAI API key: " OPENAI_API_KEY </dev/tty
+    printf '\n' >&2
+  fi
+  [[ -n "$OPENAI_API_KEY" ]] || {
+    echo "OPENAI_API_KEY is empty" >&2
+    exit 1
+  }
+
+  if ! LATENCY=$(curl -sS --fail-with-body \
+    --write-out '%{time_total}' \
+    https://api.openai.com/v1/responses \
+    -H "Authorization: Bearer $OPENAI_API_KEY" \
+    -H "Content-Type: application/json" \
+    --data-binary @"$REQUEST" \
+    -o "$RESPONSE"); then
+
+    jq . "$RESPONSE" >&2 || cat "$RESPONSE" >&2
+    exit 1
+  fi
+
+  if "$RAW"; then
+    jq . "$RESPONSE"
+  fi
+
+  if ! jq -e '.status == "completed"' "$RESPONSE" >/dev/null; then
+    jq '{status, error, incomplete_details}' "$RESPONSE" >&2
+    exit 1
+  fi
+
+  TEXT=$(jq -r '
+    [
+      .output[]?
+      | select(.type == "message")
+      | .content[]?
+      | select(.type == "output_text")
+      | .text
+    ]
+    | join("\n")
+  ' "$RESPONSE")
+
+  if [[ -z "$TEXT" ]]; then
+    echo "Empty output. Retry with --raw" >&2
+    exit 1
+  fi
+
+  if ! "$RAW"; then printf '%s\n' "$TEXT"; fi
+
+  jq -r '
+    "Tokens: input=\(.usage.input_tokens), " +
+    "output=\(.usage.output_tokens), " +
+    "reasoning=\(.usage.output_tokens_details.reasoning_tokens // 0)"
+  ' "$RESPONSE" >&2
+
+  printf 'Latency: %ss\n' "$LATENCY" >&2
+done

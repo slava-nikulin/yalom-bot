@@ -240,18 +240,13 @@ jobs:
           encoded_database_url="$(
             sudo /usr/local/bin/k3s kubectl \
               get secret yalom-bot-secrets \
-              -o jsonpath='{.data.DATABASE_URL}' \
+              -o jsonpath='{.data.YALOM_DATABASE__URL}' \
               2>/dev/null \
               || true
           )"
 
           if [[ -z "$encoded_database_url" ]]; then
-            echo "DATABASE_URL is missing from yalom-bot-secrets."
-            exit 1
-          fi
-
-          if [[ -z "$encoded_database_url" ]]; then
-            echo "DATABASE_URL was not synchronized into yalom-bot-secrets."
+            echo "YALOM_DATABASE__URL is missing from yalom-bot-secrets."
 
             sudo /usr/local/bin/k3s kubectl \
               describe externalsecret yalom-bot \
@@ -268,13 +263,13 @@ jobs:
           unset encoded_database_url
 
           if [[ -z "$database_url" ]]; then
-            echo "DATABASE_URL is empty."
+            echo "YALOM_DATABASE__URL is empty."
             exit 1
           fi
 
           echo "Running database migrations..."
 
-          DATABASE_URL="$database_url" \
+          YALOM_DATABASE__URL="$database_url" \
             "$migrate_bin"
 
           unset database_url

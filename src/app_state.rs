@@ -3,19 +3,17 @@ use std::sync::Arc;
 use axum::extract::FromRef;
 
 use crate::{
+    nudge::{
+        NudgeService, open_ai_adapter::LlmAdapter, rate_limit::ManualNudgeMySqlLimiter,
+        store::NudgeStore,
+    },
     security::session::Sessions,
-    telegram::{TelegramClient, update_service::TgUpdateService},
+    telegram::sender::TgSenderService,
     user::store::UserStore,
 };
 
 #[derive(Clone)]
-pub struct TelegramState<Tg>(pub Tg);
-
-#[derive(Clone)]
 pub struct UserStoreState<Us>(pub Us);
-
-#[derive(Clone)]
-pub struct SessionState(pub Arc<Sessions>);
 
 #[derive(Clone)]
 pub struct TgBotToken(pub Arc<str>);
@@ -23,92 +21,112 @@ pub struct TgBotToken(pub Arc<str>);
 #[derive(Clone)]
 pub struct TgWebhookSecret(pub Arc<str>);
 
-#[derive(Clone)]
-pub struct AppState<Tg, Us> {
-    pub telegram: TelegramState<Tg>,
-    pub sessions: SessionState,
+pub struct AppState<Us, A, Ns>
+where
+    A: LlmAdapter,
+    Ns: NudgeStore,
+{
+    pub sessions: Arc<Sessions>,
     pub user_store: UserStoreState<Us>,
     pub tg_bot_token: TgBotToken,
     pub tg_webhook_secret: TgWebhookSecret,
-    pub tg_update_service: TgUpdateService,
+    pub tg_update_service: TgSenderService,
+    pub nudge_service: Arc<NudgeService<A, Ns>>,
+    pub nudge_limiter: ManualNudgeMySqlLimiter,
 }
 
-impl<Tg: TelegramClient, Us: UserStore> AppState<Tg, Us> {
-    pub fn new(
-        tg_bot_token: &str,
-        tg_webhook_secret: &str,
-        sessions: Sessions,
-        tg_bot: Tg,
-        user_store: Us,
-        tg_update_service: TgUpdateService,
-    ) -> Self {
+impl<Us, A, Ns> Clone for AppState<Us, A, Ns>
+where
+    Us: UserStore,
+    A: LlmAdapter,
+    Ns: NudgeStore,
+{
+    fn clone(&self) -> Self {
         Self {
-            telegram: TelegramState::<Tg>(tg_bot),
-            user_store: UserStoreState::<Us>(user_store),
-            sessions: SessionState(Arc::new(sessions)),
-            tg_bot_token: TgBotToken(Arc::from(tg_bot_token)),
-            tg_webhook_secret: TgWebhookSecret(Arc::from(tg_webhook_secret)),
-            tg_update_service,
+            sessions: self.sessions.clone(),
+            user_store: self.user_store.clone(),
+            tg_bot_token: self.tg_bot_token.clone(),
+            tg_webhook_secret: self.tg_webhook_secret.clone(),
+            tg_update_service: self.tg_update_service.clone(),
+            nudge_service: Arc::clone(&self.nudge_service),
+            nudge_limiter: self.nudge_limiter.clone(),
         }
     }
 }
 
-impl<Tg, Us> FromRef<AppState<Tg, Us>> for TelegramState<Tg>
+impl<Us, A, Ns> FromRef<AppState<Us, A, Ns>> for UserStoreState<Us>
 where
-    Tg: TelegramClient,
     Us: UserStore,
+    A: LlmAdapter,
+    Ns: NudgeStore,
 {
-    fn from_ref(input: &AppState<Tg, Us>) -> Self {
-        input.telegram.clone()
-    }
-}
-
-impl<Tg, Us> FromRef<AppState<Tg, Us>> for UserStoreState<Us>
-where
-    Tg: TelegramClient,
-    Us: UserStore,
-{
-    fn from_ref(input: &AppState<Tg, Us>) -> Self {
+    fn from_ref(input: &AppState<Us, A, Ns>) -> Self {
         input.user_store.clone()
     }
 }
 
-impl<Tg, Us> FromRef<AppState<Tg, Us>> for SessionState
+impl<Us, A, Ns> FromRef<AppState<Us, A, Ns>> for Arc<Sessions>
 where
-    Tg: TelegramClient,
     Us: UserStore,
+    A: LlmAdapter,
+    Ns: NudgeStore,
 {
-    fn from_ref(input: &AppState<Tg, Us>) -> Self {
+    fn from_ref(input: &AppState<Us, A, Ns>) -> Self {
         input.sessions.clone()
     }
 }
 
-impl<Tg, Us> FromRef<AppState<Tg, Us>> for TgBotToken
+impl<Us, A, Ns> FromRef<AppState<Us, A, Ns>> for TgBotToken
 where
-    Tg: TelegramClient,
     Us: UserStore,
+    A: LlmAdapter,
+    Ns: NudgeStore,
 {
-    fn from_ref(input: &AppState<Tg, Us>) -> Self {
+    fn from_ref(input: &AppState<Us, A, Ns>) -> Self {
         input.tg_bot_token.clone()
     }
 }
 
-impl<Tg, Us> FromRef<AppState<Tg, Us>> for TgWebhookSecret
+impl<Us, A, Ns> FromRef<AppState<Us, A, Ns>> for TgWebhookSecret
 where
-    Tg: TelegramClient,
     Us: UserStore,
+    A: LlmAdapter,
+    Ns: NudgeStore,
 {
-    fn from_ref(input: &AppState<Tg, Us>) -> Self {
+    fn from_ref(input: &AppState<Us, A, Ns>) -> Self {
         input.tg_webhook_secret.clone()
     }
 }
 
-impl<Tg, Us> FromRef<AppState<Tg, Us>> for TgUpdateService
+impl<Us, A, Ns> FromRef<AppState<Us, A, Ns>> for TgSenderService
 where
-    Tg: TelegramClient,
     Us: UserStore,
+    A: LlmAdapter,
+    Ns: NudgeStore,
 {
-    fn from_ref(input: &AppState<Tg, Us>) -> Self {
+    fn from_ref(input: &AppState<Us, A, Ns>) -> Self {
         input.tg_update_service.clone()
+    }
+}
+
+impl<Us, A, Ns> FromRef<AppState<Us, A, Ns>> for Arc<NudgeService<A, Ns>>
+where
+    Us: UserStore,
+    A: LlmAdapter,
+    Ns: NudgeStore,
+{
+    fn from_ref(input: &AppState<Us, A, Ns>) -> Self {
+        Arc::clone(&input.nudge_service)
+    }
+}
+
+impl<Us, A, Ns> FromRef<AppState<Us, A, Ns>> for ManualNudgeMySqlLimiter
+where
+    Us: UserStore,
+    A: LlmAdapter,
+    Ns: NudgeStore,
+{
+    fn from_ref(input: &AppState<Us, A, Ns>) -> Self {
+        input.nudge_limiter.clone()
     }
 }

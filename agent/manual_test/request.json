@@ -1,0 +1,12 @@
+{
+  "model": "gpt-6-luna",
+  "store": false,
+  "max_output_tokens": 1200,
+  "instructions": "",
+  "input": [
+    {
+      "role": "user",
+      "content": ""
+    }
+  ]
+}

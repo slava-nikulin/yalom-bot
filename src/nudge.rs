@@ -1,0 +1,187 @@
+use std::range::Range;
+
+use chrono::{DateTime, SecondsFormat};
+use chrono_tz::Tz;
+
+use crate::nudge::{
+    NudgeServiceError::OpenAiAdapterError,
+    model::{NudgeDayTime, NudgeIntent, NudgeTime},
+    open_ai_adapter::{AdapterError, LlmAdapter, LlmRequest},
+    store::NudgeStore,
+};
+
+pub mod model;
+pub mod open_ai_adapter;
+pub mod rate_limit;
+pub mod store;
+
+const IDENTITY_PROMPT: &str = include_str!("../agent/prompts/identity.md");
+const EXAMPLES_PROMPT: &str = include_str!("../agent/prompts/examples.md");
+const MESSAGE_PROMPT: &str = include_str!("../agent/prompts/message.md");
+
+const GREETING_INTENT_PROMPT: &str = include_str!("../agent/prompts/intents/greeting.md");
+const INVITATION_INTENT_PROMPT: &str = include_str!("../agent/prompts/intents/invitation.md");
+const OBSERVATION_INTENT_PROMPT: &str = include_str!("../agent/prompts/intents/observation.md");
+const QUESTION_INTENT_PROMPT: &str = include_str!("../agent/prompts/intents/question.md");
+
+const TIME_FOCUS_PROMPT: &str = "Тематический фокус: сообщение должно быть непосредственно связано с текущим временем суток. Свободно выбери конкретную мысль, сохраняя заданное намерение и характер Yalom.";
+
+#[derive(Debug, thiserror::Error)]
+pub enum NudgeServiceError {
+    #[error("openAI adapter error")]
+    OpenAiAdapterError(#[source] AdapterError),
+
+    #[error("nudge store error")]
+    StoreError(#[source] sqlx::Error),
+}
+
+pub enum NudgeSource {
+    OpenAi,
+    Curated,
+}
+
+pub trait RandomRange {
+    fn random_range(&mut self, range: Range<u32>) -> u32;
+}
+
+pub struct DefaultRng;
+
+impl RandomRange for DefaultRng {
+    fn random_range(&mut self, range: Range<u32>) -> u32 {
+        rand::random_range(std::ops::Range::<u32>::from(range))
+    }
+}
+
+pub struct GeneratedNudge {
+    pub text: String,
+    pub intent: NudgeIntent,
+    pub source: NudgeSource,
+    pub time_focus: bool,
+}
+pub struct NudgeService<A, S>
+where
+    A: LlmAdapter,
+    S: NudgeStore,
+{
+    open_ai_adapter: A,
+    store: S,
+}
+
+impl<A, S> NudgeService<A, S>
+where
+    A: LlmAdapter,
+    S: NudgeStore,
+{
+    pub fn new(open_ai_adapter: A, store: S) -> Self {
+        Self {
+            open_ai_adapter,
+            store,
+        }
+    }
+
+    pub async fn generate<R: RandomRange>(
+        &self,
+        mut rng: R,
+        nudge_time: NudgeTime,
+    ) -> Result<GeneratedNudge, NudgeServiceError> {
+        let time_focus = chance(&mut rng, 50);
+        let daytime = if time_focus {
+            nudge_time.daytime
+        } else {
+            NudgeDayTime::Any
+        };
+        let intent = pick_intent(&mut rng);
+
+        let curated = if chance(&mut rng, 20) {
+            self.store
+                .get_random_nudge(intent, daytime)
+                .await
+                .map_err(NudgeServiceError::StoreError)?
+        } else {
+            None
+        };
+
+        let (text, source) = match curated {
+            Some(text) => (text, NudgeSource::Curated),
+            None => (
+                self.open_ai_generate(intent, nudge_time.now, time_focus)
+                    .await?,
+                NudgeSource::OpenAi,
+            ),
+        };
+
+        Ok(GeneratedNudge {
+            text,
+            intent,
+            source,
+            time_focus,
+        })
+    }
+
+    async fn open_ai_generate(
+        &self,
+        intent: NudgeIntent,
+        now: DateTime<Tz>,
+        time_focus: bool,
+    ) -> Result<String, NudgeServiceError> {
+        let llm_request = build_llm_request(intent, now, time_focus);
+
+        let llm_resp = self
+            .open_ai_adapter
+            .execute(llm_request)
+            .await
+            .map_err(OpenAiAdapterError)?;
+
+        Ok(llm_resp.text)
+    }
+}
+
+fn build_llm_request(intent: NudgeIntent, now: DateTime<Tz>, time_focus: bool) -> LlmRequest {
+    let instructions = [
+        IDENTITY_PROMPT,
+        EXAMPLES_PROMPT,
+        MESSAGE_PROMPT,
+        get_intent_prompt(intent),
+    ]
+    .join("\n");
+
+    let mut context = format!(
+        "Current date and time: {}\nTimezone: {}",
+        now.to_rfc3339_opts(SecondsFormat::Secs, true),
+        now.timezone(),
+    );
+    if time_focus {
+        context.push('\n');
+        context.push_str(TIME_FOCUS_PROMPT);
+    }
+
+    LlmRequest {
+        instructions,
+        context,
+    }
+}
+
+fn get_intent_prompt(intent: NudgeIntent) -> &'static str {
+    match intent {
+        NudgeIntent::Observation => OBSERVATION_INTENT_PROMPT,
+        NudgeIntent::Question => QUESTION_INTENT_PROMPT,
+        NudgeIntent::Invitation => INVITATION_INTENT_PROMPT,
+        NudgeIntent::Greeting => GREETING_INTENT_PROMPT,
+    }
+}
+
+fn chance<R: RandomRange>(rng: &mut R, percent: u32) -> bool {
+    rng.random_range((0..100).into()) < percent
+}
+
+fn pick_intent<R: RandomRange>(rng: &mut R) -> NudgeIntent {
+    match rng.random_range((0..100).into()) {
+        0..30 => NudgeIntent::Observation,
+        30..60 => NudgeIntent::Invitation,
+        60..90 => NudgeIntent::Question,
+        _ => NudgeIntent::Greeting,
+    }
+}
+
+#[cfg(test)]
+mod tests;

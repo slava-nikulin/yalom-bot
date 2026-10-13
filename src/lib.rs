@@ -1,6 +1,7 @@
 pub mod app_state;
 pub mod config;
 pub mod http;
+pub mod nudge;
 pub mod security;
 pub mod telegram;
 pub mod user;
