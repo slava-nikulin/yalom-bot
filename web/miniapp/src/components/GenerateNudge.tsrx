@@ -121,7 +121,7 @@ export default function GenerateNudge() @{
       type="button"
       disabled={mutation.isPending || remainingSeconds() > 0}
       onClick={() => mutation.mutate()}
-      class="flex h-14 w-full items-center justify-center rounded-2xl bg-[var(--app-button)] px-5 text-base font-semibold text-[var(--app-button-text)] transition-opacity active:opacity-85 disabled:cursor-not-allowed disabled:opacity-50"
+      class="flex h-14 w-full items-center justify-center rounded-2xl bg-[var(--app-button)] px-5 text-base font-semibold text-[var(--app-button-text)] transition-opacity cursor-pointer active:opacity-85 disabled:cursor-not-allowed disabled:opacity-50"
     >
       {buttonLabel()}
     </button>
