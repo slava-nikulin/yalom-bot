@@ -21,13 +21,13 @@ export default function MiniAppSessionBoundary(props: ParentProps) {
 
       <Match when={session.isError}>
         <main class="grid min-h-dvh place-items-center p-6 text-center">
-          <p>Failed to start Mini App.</p>
+          <p>Не удалось открыть Yalom.</p>
         </main>
       </Match>
 
       <Match when={true}>
         <main class="grid min-h-dvh place-items-center p-6 text-center">
-          <p>Starting Yalom…</p>
+          <p>Загрузка…</p>
         </main>
       </Match>
     </Switch>
