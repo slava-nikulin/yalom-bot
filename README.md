@@ -25,15 +25,6 @@ These opportunities come in the form of short, text-based insights that users ca
 
 ## Tech Stack
 
-- **Backend:** Rust, Tokio, Axum, SQLx
-- **Frontend:** SolidJS 2, TSRX, TanStack Query
-- **Database:** MySQL
-- **Integrations:** Telegram Bot API, OpenAI API
-- **Infrastructure:** OCI Always Free, k3s, Traefik, Caddy, Gateway API, OCI Vault, External Secrets Operator, cert-manager
-- **CI/CD:** GitHub Actions, Docker, GHCR, OCI Object Storage
-
-## Tech Stack
-
 **Backend**
 
 Rust (Tokio, Axum), SQLx, async-channel, tracing. Asynchronous HTTP API, background workers.
