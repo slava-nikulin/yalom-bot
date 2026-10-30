@@ -35,6 +35,7 @@ pub enum NudgeServiceError {
     StoreError(#[source] sqlx::Error),
 }
 
+#[derive(Debug)]
 pub enum NudgeSource {
     OpenAi,
     Curated,
