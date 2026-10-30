@@ -33,7 +33,10 @@ where
 
             let w = tokio::spawn(async move {
                 while let Ok(message) = receiver.recv().await {
-                    let span = tracing::error_span!("worker_pool.process", ?message);
+                    let span = tracing::error_span!(
+                        "worker_pool.process",
+                        job_type = std::any::type_name::<T>()
+                    );
                     let fm = fw.clone();
 
                     async move {
@@ -41,7 +44,7 @@ where
                         match result {
                             Ok(Ok(())) => {},
                             Ok(Err(err)) => {
-                                tracing::error!(error = %err, "failed to process worker pool message");
+                                tracing::error!(error = ?err, "failed to process worker pool message");
                             },
                             Err(_) => {
                                 tracing::error!("worker pool message processing timed out");

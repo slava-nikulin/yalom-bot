@@ -216,6 +216,11 @@ async fn update_bot_settings<Us: UserStore>(
     }))
 }
 
+#[tracing::instrument(
+    name = "miniapp.generate_nudge",
+    skip_all,
+    fields(tg_user_id = identity.tg_user_id)
+)]
 async fn generate_nudge_manual<Us, A, Ns>(
     identity: SessionIdentity,
     State(UserStoreState(user_store)): State<UserStoreState<Us>>,
@@ -229,6 +234,8 @@ where
     A: LlmAdapter,
     Ns: NudgeStore,
 {
+    tracing::info!("manual nudge requested");
+
     let user = user_store
         .get(identity.tg_user_id)
         .await
@@ -301,6 +308,13 @@ where
 
             MiniAppErr::Unavailable
         })?;
+
+    tracing::info!(
+        intent = ?nudge.intent,
+        source = ?nudge.source,
+        time_focus = nudge.time_focus,
+        "manual nudge queued for Telegram delivery"
+    );
 
     Ok(Json(NudgeResponse { text: nudge.text }))
 }
