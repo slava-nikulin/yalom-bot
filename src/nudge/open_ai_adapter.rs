@@ -63,15 +63,30 @@ impl LlmAdapter for OpenAiAdapter {
         let response = self.client.responses().create(request).await?;
 
         if response.status != Status::Completed {
+            tracing::error!(
+                response_id = %response.id,
+                status = ?response.status,
+                incomplete_details = ?response.incomplete_details,
+                response_error = ?response.error,
+                "OpenAI returned a non-completed response"
+            );
+
             return Err(AdapterError::NotCompletedResponse);
         }
 
-        Ok(LlmResponse {
-            text: response
-                .output_text()
-                .map(|s| s.trim().to_owned())
-                .filter(|trimmed| !trimmed.is_empty())
-                .ok_or(AdapterError::EmptyResponse)?,
-        })
+        let text = response
+            .output_text()
+            .map(|s| s.trim().to_owned())
+            .filter(|trimmed| !trimmed.is_empty())
+            .ok_or_else(|| {
+                tracing::error!(
+                    response_id = %response.id,
+                    "OpenAI completed without output text"
+                );
+
+                AdapterError::EmptyResponse
+            })?;
+
+        Ok(LlmResponse { text })
     }
 }
