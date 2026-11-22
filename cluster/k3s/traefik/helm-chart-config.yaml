@@ -44,7 +44,7 @@ spec:
       websecure:
         port: 443
         containerPort: 443
-        hostPort: 443
+        hostPort: 8443
 
     securityContext:
       capabilities:
