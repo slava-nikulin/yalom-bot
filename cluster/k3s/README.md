@@ -32,13 +32,11 @@ The bootstrap process:
         -> SSH
         -> Ubuntu VM
         -> install/configure k3s
-        -> configure Traefik
-        -> install ESO
-        -> install cert-manager
-        -> configure Gateway
+        -> configure OCI Run Command access
 
-The bootstrap is designed to be idempotent and may be executed
-again to reconcile cluster configuration.
+Bootstrap is idempotent and manages only the host and k3s installation.
+The GitHub Release workflow reconciles HelmCharts, Traefik, Gateway,
+cert-manager, External Secrets and application manifests.
 
 ## k3s
 

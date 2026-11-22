@@ -62,5 +62,6 @@ EOF
 tar \
     -C "${K3S_DIR}" \
     -czf - \
-    . \
+    bootstrap/bootstrap-server.sh \
+    config/server.yaml \
     | ssh "${SSH_DESTINATION}" "${REMOTE_COMMAND}"

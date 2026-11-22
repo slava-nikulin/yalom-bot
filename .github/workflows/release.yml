@@ -126,6 +126,19 @@ jobs:
           kubectl kustomize deploy/k8s/overlays/oci-k3s \
             > /tmp/release.yaml
 
+          kubectl kustomize cluster/k3s/gateway \
+            > /tmp/cluster-gateway.yaml
+
+          {
+            for file in \
+              cluster/k3s/traefik/helm-chart-config.yaml \
+              cluster/k3s/external-secrets/helm-chart.yaml \
+              cluster/k3s/cert-manager/helm-chart.yaml; do
+              cat "$file"
+              printf '\n---\n'
+            done
+          } > /tmp/cluster-helm.yaml
+
           if grep -Fq ':latest' /tmp/release.yaml; then
             echo "Production manifest still contains :latest"
             exit 1
@@ -147,12 +160,22 @@ jobs:
 
           manifest="$(mktemp)"
           external_secret_manifest="$(mktemp)"
+          helm_manifest="$(mktemp)"
+          gateway_manifest="$(mktemp)"
+          issuer_manifest="$(mktemp)"
+          certificate_manifest="$(mktemp)"
+          tls_store_manifest="$(mktemp)"
           migrate_bin="$(mktemp /tmp/yalom-migrate.XXXXXX)"
 
           cleanup() {
             rm -f \
               "$manifest" \
               "$external_secret_manifest" \
+              "$helm_manifest" \
+              "$gateway_manifest" \
+              "$issuer_manifest" \
+              "$certificate_manifest" \
+              "$tls_store_manifest" \
               "$migrate_bin"
           }
 
@@ -174,6 +197,46 @@ jobs:
             cat <<'SCRIPT'
           __YALOM_EXTERNAL_SECRET__
 
+          cat > "$helm_manifest" <<'__YALOM_CLUSTER_HELM__'
+          SCRIPT
+
+            cat /tmp/cluster-helm.yaml
+
+            cat <<'SCRIPT'
+          __YALOM_CLUSTER_HELM__
+
+          cat > "$gateway_manifest" <<'__YALOM_CLUSTER_GATEWAY__'
+          SCRIPT
+
+            cat /tmp/cluster-gateway.yaml
+
+            cat <<'SCRIPT'
+          __YALOM_CLUSTER_GATEWAY__
+
+          cat > "$issuer_manifest" <<'__YALOM_CLUSTER_ISSUER__'
+          SCRIPT
+
+            cat cluster/k3s/cert-manager/cluster-issuer.yaml
+
+            cat <<'SCRIPT'
+          __YALOM_CLUSTER_ISSUER__
+
+          cat > "$certificate_manifest" <<'__YALOM_CLUSTER_CERTIFICATE__'
+          SCRIPT
+
+            cat cluster/k3s/cert-manager/certificate.yaml
+
+            cat <<'SCRIPT'
+          __YALOM_CLUSTER_CERTIFICATE__
+
+          cat > "$tls_store_manifest" <<'__YALOM_CLUSTER_TLS_STORE__'
+          SCRIPT
+
+            cat cluster/k3s/traefik/tls-store.yaml
+
+            cat <<'SCRIPT'
+          __YALOM_CLUSTER_TLS_STORE__
+
           base64 --decode > "$migrate_bin" <<'__YALOM_MIGRATE_BINARY__'
           SCRIPT
 
@@ -183,6 +246,85 @@ jobs:
           __YALOM_MIGRATE_BINARY__
 
           chmod 0700 "$migrate_bin"
+
+          wait_for_resource() {
+            local namespace="$1"
+            local resource="$2"
+
+            for _ in $(seq 1 90); do
+              if sudo /usr/local/bin/k3s kubectl \
+                  -n "$namespace" get "$resource" >/dev/null 2>&1; then
+                return 0
+              fi
+              sleep 2
+            done
+
+            echo "Resource did not appear: $namespace/$resource"
+            return 1
+          }
+
+          echo "Applying cluster HelmChart resources..."
+          sudo /usr/local/bin/k3s kubectl apply -f "$helm_manifest"
+
+          echo "Waiting for Traefik host ports..."
+          wait_for_resource kube-system daemonset/traefik
+
+          traefik_ports_ready=0
+          for _ in $(seq 1 90); do
+            actual_ports="$(
+              sudo /usr/local/bin/k3s kubectl \
+                -n kube-system get daemonset/traefik \
+                -o jsonpath='{range .spec.template.spec.containers[?(@.name=="traefik")].ports[*]}{.name}={.hostPort}{" "}{end}' \
+                2>/dev/null || true
+            )"
+
+            if [[ " $actual_ports " == *" web=8080 "* \
+                && " $actual_ports " == *" websecure=8443 "* ]]; then
+              traefik_ports_ready=1
+              break
+            fi
+
+            sleep 2
+          done
+
+          if [[ "$traefik_ports_ready" -ne 1 ]]; then
+            echo "Traefik hostPorts did not reconcile to 8080/8443."
+            exit 1
+          fi
+
+          sudo /usr/local/bin/k3s kubectl -n kube-system \
+            rollout status daemonset/traefik --timeout=300s
+
+          echo "Waiting for External Secrets and cert-manager..."
+          wait_for_resource external-secrets deployment/external-secrets
+          wait_for_resource cert-manager deployment/cert-manager
+
+          sudo /usr/local/bin/k3s kubectl \
+            -n external-secrets wait --for=condition=Available \
+            deployment --all --timeout=300s
+
+          sudo /usr/local/bin/k3s kubectl \
+            -n cert-manager wait --for=condition=Available \
+            deployment --all --timeout=300s
+
+          echo "Applying Gateway configuration..."
+          wait_for_resource default crd/gateways.gateway.networking.k8s.io
+          sudo /usr/local/bin/k3s kubectl apply -f "$gateway_manifest"
+
+          sudo /usr/local/bin/k3s kubectl \
+            wait --for=condition=Accepted gatewayclass/traefik --timeout=180s
+
+          echo "Applying issuer and certificate..."
+          wait_for_resource default crd/clusterissuers.cert-manager.io
+          sudo /usr/local/bin/k3s kubectl apply -f "$issuer_manifest"
+          sudo /usr/local/bin/k3s kubectl \
+            wait --for=condition=Ready clusterissuer/letsencrypt-shortlived --timeout=180s
+
+          sudo /usr/local/bin/k3s kubectl apply -f "$certificate_manifest"
+          sudo /usr/local/bin/k3s kubectl -n gateway-system \
+            wait --for=condition=Ready certificate/public-ip --timeout=180s
+
+          sudo /usr/local/bin/k3s kubectl apply -f "$tls_store_manifest"
 
           echo "Applying production ExternalSecret..."
 
@@ -304,7 +446,9 @@ jobs:
 
           rm -f \
             /tmp/yalom-migrate \
-            /tmp/yalom-migrate.b64
+            /tmp/yalom-migrate.b64 \
+            /tmp/cluster-gateway.yaml \
+            /tmp/cluster-helm.yaml
 
       - name: Set up OCI
         uses: ./.github/actions/oci-wif
@@ -366,7 +510,7 @@ jobs:
           echo "namespace=${namespace}" >> "$GITHUB_OUTPUT"
 
       - name: Deploy to production
-        timeout-minutes: 10
+        timeout-minutes: 20
         env:
           INSTANCE_ID: ${{ steps.instance.outputs.instance-id }}
           COMPARTMENT_ID: ${{ steps.instance.outputs.compartment-id }}
@@ -401,7 +545,7 @@ jobs:
               --compartment-id "$COMPARTMENT_ID" \
               --target file:///tmp/command-target.json \
               --content file:///tmp/command-content.json \
-              --timeout-in-seconds 540 \
+              --timeout-in-seconds 840 \
               --display-name "yalom-release-${GITHUB_SHA}" \
               --query data.id \
               --raw-output
@@ -409,7 +553,7 @@ jobs:
 
           echo "Run Command: ${command_id}"
 
-          deadline=$((SECONDS + 570))
+          deadline=$((SECONDS + 870))
 
           while (( SECONDS < deadline )); do
             execution="$(

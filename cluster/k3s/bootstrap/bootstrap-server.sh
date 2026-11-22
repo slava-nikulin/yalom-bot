@@ -19,7 +19,6 @@ K3S_VERSION="v1.36.3+k3s1"
 
 K3S_CONFIG_DIR="/etc/rancher/k3s"
 K3S_CONFIG="${K3S_CONFIG_DIR}/config.yaml"
-K3S_MANIFEST_DIR="/var/lib/rancher/k3s/server/manifests"
 
 
 log() {
@@ -88,16 +87,6 @@ if install_if_changed \
 
     restart_k3s=1
 fi
-
-
-log "Installing Traefik cluster configuration"
-
-mkdir -p "${K3S_MANIFEST_DIR}"
-
-install_if_changed \
-    "${BUNDLE_DIR}/traefik/helm-chart-config.yaml" \
-    "${K3S_MANIFEST_DIR}/10-traefik-config.yaml" \
-    || true
 
 
 log "Checking k3s version"
@@ -178,203 +167,22 @@ k3s kubectl wait \
     --all \
     --timeout=180s
 
-log "Waiting for Gateway API CRDs"
-
-gateway_api_ready=0
-
-for _ in $(seq 1 90); do
-    if k3s kubectl get \
-        crd/gateways.gateway.networking.k8s.io \
-        >/dev/null 2>&1 \
-        && \
-       k3s kubectl get \
-        crd/httproutes.gateway.networking.k8s.io \
-        >/dev/null 2>&1; then
-
-        gateway_api_ready=1
-        break
-    fi
-
-    sleep 2
-done
-
-if [[ "${gateway_api_ready}" -ne 1 ]]; then
-    echo "Gateway API CRDs did not become ready"
-    exit 1
-fi
-
-
-log "Installing External Secrets Operator"
-
-k3s kubectl apply \
-    -f "${BUNDLE_DIR}/external-secrets/helm-chart.yaml"
-
-
-log "Installing cert-manager"
-
-k3s kubectl apply \
-    -f "${BUNDLE_DIR}/cert-manager/helm-chart.yaml"
-
-
-log "Waiting for Traefik"
-
-for _ in $(seq 1 60); do
-    if k3s kubectl \
-        -n kube-system \
-        get daemonset/traefik \
-        >/dev/null 2>&1; then
-        break
-    fi
-
-    sleep 2
-done
-
-k3s kubectl \
-    -n kube-system \
-    rollout status daemonset/traefik \
-    --timeout=300s
-
-
-log "Waiting for External Secrets Operator"
-
-for _ in $(seq 1 60); do
-    if k3s kubectl \
-        -n external-secrets \
-        get deployment \
-        -o name 2>/dev/null \
-        | grep -q .; then
-        break
-    fi
-
-    sleep 2
-done
-
-k3s kubectl \
-    -n external-secrets \
-    wait \
-    --for=condition=Available \
-    deployment \
-    --all \
-    --timeout=300s
-
-
-log "Waiting for cert-manager"
-
-for _ in $(seq 1 60); do
-    if k3s kubectl \
-        -n cert-manager \
-        get deployment \
-        -o name 2>/dev/null \
-        | grep -q .; then
-        break
-    fi
-
-    sleep 2
-done
-
-k3s kubectl \
-    -n cert-manager \
-    wait \
-    --for=condition=Available \
-    deployment \
-    --all \
-    --timeout=300s
-
-
-log "Applying Gateway configuration"
-
-k3s kubectl apply \
-    -k "${BUNDLE_DIR}/gateway"
-
-
-log "Waiting for GatewayClass"
-
-k3s kubectl wait \
-    --for=condition=Accepted \
-    gatewayclass/traefik \
-    --timeout=180s
-
-
-log "Configuring Let's Encrypt issuer"
-
-k3s kubectl apply \
-    -f "${BUNDLE_DIR}/cert-manager/cluster-issuer.yaml"
-
-k3s kubectl wait \
-    --for=condition=Ready \
-    clusterissuer/letsencrypt-shortlived \
-    --timeout=180s
-
-
-log "Requesting public IP certificate"
-
-k3s kubectl apply \
-    -f "${BUNDLE_DIR}/cert-manager/certificate.yaml"
-
-k3s kubectl \
-    -n gateway-system \
-    wait \
-    --for=condition=Ready \
-    certificate/public-ip \
-    --timeout=600s
-
-log "Configuring Traefik default TLS certificate"
-
-k3s kubectl apply \
-    -f "${BUNDLE_DIR}/traefik/tls-store.yaml"
-
-log "Waiting for public Gateway"
-
-k3s kubectl \
-    -n gateway-system \
-    wait \
-    --for=condition=Programmed \
-    gateway/public-gateway \
-    --timeout=180s
-
-
-log "Cluster bootstrap completed"
-
-k3s kubectl get nodes -o wide
-
-echo
-
-k3s kubectl \
-    -n kube-system \
-    get daemonset traefik
-
-echo
-
-k3s kubectl get gatewayclass
-
-echo
-
-k3s kubectl \
-    -n gateway-system \
-    get gateway
-
-echo
-
-k3s kubectl get clusterissuer
-
-echo
-
-k3s kubectl \
-    -n gateway-system \
-    get certificate
-
-
-echo "Configuring OCI Run Command sudo access..."
+log "Configuring OCI Run Command sudo access"
 
 sudoers_file=/etc/sudoers.d/101-oracle-cloud-agent-run-command
 sudoers_tmp="$(mktemp)"
 
-cat >"${sudoers_tmp}" <<'EOF'
+trap 'rm -f "$sudoers_tmp"' EXIT
+
+cat >"$sudoers_tmp" <<'EOF'
 ocarun ALL=(root) NOPASSWD: /usr/local/bin/k3s
 EOF
 
-chmod 440 "${sudoers_tmp}"
-visudo -cf "${sudoers_tmp}"
+chmod 440 "$sudoers_tmp"
+visudo -cf "$sudoers_tmp"
 
-install -m 440 "${sudoers_tmp}" "${sudoers_file}"
-rm -f "${sudoers_tmp}"
+install_if_changed "$sudoers_tmp" "$sudoers_file" 0440 || true
+
+log "k3s bootstrap completed"
+
+k3s kubectl get nodes -o wide
