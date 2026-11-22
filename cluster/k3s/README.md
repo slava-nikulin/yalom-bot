@@ -56,9 +56,10 @@ On the server this becomes:
 
 ## Traffic path
 
-    OCI NLB
-        -> node :80/:443
+    OCI NLB TCP/80  -> node :80
+    OCI NLB TCP/443 -> node :8443
         -> Traefik DaemonSet hostPort
+        -> Traefik HTTPS containerPort :443
         -> Gateway API
         -> application HTTPRoute
         -> Service
@@ -67,3 +68,7 @@ On the server this becomes:
 k3s ServiceLB is disabled.
 
 Traefik runs as a DaemonSet: one Traefik Pod per cluster node.
+
+The NLB HTTPS backend and TCP health check must use node port 8443 before
+switching production traffic. OCI NSGs and the VM firewall must permit
+NLB-to-node TCP/8443. Changing only Traefik temporarily interrupts HTTPS.
