@@ -69,6 +69,3 @@ k3s ServiceLB is disabled.
 
 Traefik runs as a DaemonSet: one Traefik Pod per cluster node.
 
-The NLB HTTPS backend and TCP health check must use node port 8443 before
-switching production traffic. OCI NSGs and the VM firewall must permit
-NLB-to-node TCP/8443. Changing only Traefik temporarily interrupts HTTPS.
