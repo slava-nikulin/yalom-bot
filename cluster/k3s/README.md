@@ -56,9 +56,10 @@ On the server this becomes:
 
 ## Traffic path
 
-    OCI NLB
-        -> node :80/:443
+    OCI NLB TCP/80  -> node :8080
+    OCI NLB TCP/443 -> node :8443
         -> Traefik DaemonSet hostPort
+        -> Traefik HTTPS containerPort :443
         -> Gateway API
         -> application HTTPRoute
         -> Service
@@ -67,3 +68,4 @@ On the server this becomes:
 k3s ServiceLB is disabled.
 
 Traefik runs as a DaemonSet: one Traefik Pod per cluster node.
+
