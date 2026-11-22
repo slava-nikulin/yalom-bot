@@ -56,7 +56,7 @@ On the server this becomes:
 
 ## Traffic path
 
-    OCI NLB TCP/80  -> node :80
+    OCI NLB TCP/80  -> node :8080
     OCI NLB TCP/443 -> node :8443
         -> Traefik DaemonSet hostPort
         -> Traefik HTTPS containerPort :443
